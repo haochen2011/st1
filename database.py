@@ -162,7 +162,12 @@ class DatabaseManager:
     def query_to_dataframe(self, sql, params=None):
         """执行查询并返回DataFrame"""
         try:
-            return pd.read_sql(sql, self.engine, params=params)
+            # 使用 SQLAlchemy 的 text() 包装 SQL，支持命名参数
+            with self.engine.connect() as conn:
+                result = conn.execute(text(sql), params or {})
+                # 将结果转换为 DataFrame
+                df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                return df
         except Exception as e:
             logger.error(f"查询失败: {sql}, 错误: {e}")
             return pd.DataFrame()

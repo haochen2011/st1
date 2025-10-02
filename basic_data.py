@@ -12,6 +12,7 @@ from pathlib import Path
 from loguru import logger
 from database import db_manager
 from config import config
+from data_source_manager import data_source_manager
 
 
 class BasicData:
@@ -29,24 +30,14 @@ class BasicData:
             if start_date is None:
                 start_date = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
 
-            if period in ['1min', '5min', '15min', '30min', '60min']:
-                stock_data = ak.stock_zh_a_hist_min_em(
-                    symbol=stock_code,
-                    start_date=start_date,
-                    end_date=end_date,
-                    period=period.replace('min', ''),
-                    adjust=adjust
-                )
-            else:
-                period_mapping = {'daily': 'daily', 'week': 'weekly', 'month': 'monthly'}
-                ak_period = period_mapping.get(period, 'daily')
-                stock_data = ak.stock_zh_a_hist(
-                    symbol=stock_code,
-                    period=ak_period,
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust=adjust
-                )
+            # 使用数据源管理器获取数据
+            stock_data = data_source_manager.get_stock_data(
+                stock_code=stock_code,
+                period=period,
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust
+            )
 
             if not stock_data.empty:
                 stock_data = self._standardize_columns(stock_data, stock_code, period)

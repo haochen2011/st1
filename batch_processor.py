@@ -24,6 +24,7 @@ from config import config
 from stock_info import stock_info
 from tick_data import tick_data
 from basic_data import basic_data
+from data_source_manager import data_source_manager
 import schedule
 
 
@@ -47,104 +48,35 @@ class BatchProcessor:
         self.log_dir.mkdir(exist_ok=True)
 
     def get_all_stock_codes(self) -> List[Dict]:
-        """获取所有A股股票代码列表，优化版本"""
+        """获取所有A股股票代码列表，使用数据源管理器"""
         try:
             logger.info("开始获取所有A股股票列表...")
 
-            # 方法1：直接使用akshare获取所有A股现货数据
-            try:
-                all_stocks_df = ak.stock_zh_a_spot_em()
+            # 使用数据源管理器获取股票列表
+            stocks_df = data_source_manager.get_stock_list('all')
 
-                if not all_stocks_df.empty:
-                    logger.info(f"股票数据列名: {list(all_stocks_df.columns)}")
+            if not stocks_df.empty:
+                # 标准化数据
+                stock_list = []
+                for _, row in stocks_df.iterrows():
+                    stock_code = row.get('SECURITY_CODE_A', '')
+                    stock_name = row.get('SECURITY_ABBR_A', '')
+                    market = row.get('market', '')
 
-                    # 过滤A股股票（以0、3、6开头的代码）
-                    stock_filter = all_stocks_df['代码'].str.match(r'^[036]')
-                    filtered_stocks = all_stocks_df[stock_filter].copy()
-
-                    # 标准化数据
-                    stock_list = []
-                    for _, row in filtered_stocks.iterrows():
-                        stock_code = row['代码']
-                        stock_name = row['名称']
-
-                        # 判断市场
-                        if stock_code.startswith('6'):
-                            market = 'sh'  # 上海
-                        elif stock_code.startswith(('0', '3')):
-                            market = 'sz'  # 深圳
-                        else:
-                            continue  # 跳过其他代码
-
+                    if stock_code and stock_name and market:
                         stock_list.append({
                             'stock_code': stock_code,
                             'stock_name': stock_name,
                             'market': market
                         })
 
-                    if stock_list:
-                        logger.info(f"获取股票列表成功，共 {len(stock_list)} 只股票")
-                        self._save_stock_list(stock_list)
-                        return stock_list
-
-            except Exception as e1:
-                logger.warning(f"方法1失败: {e1}")
-
-            # 方法2：尝试获取上海和深圳股票分别获取
-            try:
-                logger.info("尝试分别获取上海和深圳股票...")
-                stock_list = []
-
-                # 获取上海A股
-                try:
-                    sh_stocks = ak.stock_info_sh_name_code()
-                    if not sh_stocks.empty:
-                        for _, row in sh_stocks.iterrows():
-                            # 检查不同的可能列名
-                            code_col = None
-                            name_col = None
-
-                            for col in sh_stocks.columns:
-                                if 'CODE' in col.upper() or '代码' in col:
-                                    code_col = col
-                                if 'NAME' in col.upper() or 'ABBR' in col.upper() or '名称' in col:
-                                    name_col = col
-
-                            if code_col and name_col:
-                                stock_list.append({
-                                    'stock_code': row[code_col],
-                                    'stock_name': row[name_col],
-                                    'market': 'sh'
-                                })
-                except Exception as e_sh:
-                    logger.warning(f"获取上海股票失败: {e_sh}")
-
-                # 获取深圳A股（从现货数据中筛选）
-                try:
-                    sz_stocks = ak.stock_zh_a_spot_em()
-                    if not sz_stocks.empty:
-                        sz_filter = sz_stocks['代码'].str.match(r'^[03]')
-                        sz_filtered = sz_stocks[sz_filter]
-
-                        for _, row in sz_filtered.iterrows():
-                            stock_list.append({
-                                'stock_code': row['代码'],
-                                'stock_name': row['名称'],
-                                'market': 'sz'
-                            })
-                except Exception as e_sz:
-                    logger.warning(f"获取深圳股票失败: {e_sz}")
-
                 if stock_list:
-                    logger.info(f"分别获取股票列表成功，共 {len(stock_list)} 只股票")
+                    logger.info(f"获取股票列表成功，共 {len(stock_list)} 只股票")
                     self._save_stock_list(stock_list)
                     return stock_list
 
-            except Exception as e2:
-                logger.warning(f"方法2失败: {e2}")
-
-            # 如果以上方法都失败，使用备用股票列表
-            logger.info("使用备用股票列表...")
+            # 如果获取失败，使用备用股票列表
+            logger.warning("数据源管理器获取失败，使用备用股票列表...")
             return self._get_stock_codes_fallback()
 
         except Exception as e:

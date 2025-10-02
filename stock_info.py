@@ -13,6 +13,7 @@ try:
 except ImportError:
     from database import db_manager
 from config import config
+from data_source_manager import data_source_manager
 
 
 class StockInfo:
@@ -24,28 +25,7 @@ class StockInfo:
     def get_stock_list(self, market='all'):
         """获取股票列表"""
         try:
-            if market == 'all' or market == 'sh':
-                # 获取上海股票列表
-                sh_stocks = ak.stock_info_sh_name_code()
-                sh_stocks['market'] = 'sh'
-
-            if market == 'all' or market == 'sz':
-                # 获取深圳股票列表
-                sz_stocks = ak.stock_zh_a_spot_em()
-                sz_stocks = sz_stocks[sz_stocks['代码'].str.startswith(('00', '30'))]
-                sz_stocks = sz_stocks[['代码', '名称']].rename(
-                    columns={'代码': 'SECURITY_CODE_A', '名称': 'SECURITY_ABBR_A'})
-                sz_stocks['market'] = 'sz'
-
-            if market == 'all':
-                stocks = pd.concat([sh_stocks, sz_stocks], ignore_index=True)
-            elif market == 'sh':
-                stocks = sh_stocks
-            elif market == 'sz':
-                stocks = sz_stocks
-            else:
-                raise ValueError(f"不支持的市场代码: {market}")
-
+            stocks = data_source_manager.get_stock_list(market)
             logger.info(f"获取 {market} 市场股票列表成功，共 {len(stocks)} 只股票")
             return stocks
 
@@ -56,31 +36,54 @@ class StockInfo:
     def get_stock_basic_info(self, stock_code):
         """获取股票基本信息"""
         try:
-            # 获取股票基本信息
-            stock_individual_info = ak.stock_individual_info_em(symbol=stock_code)
+            # 使用数据源管理器获取基本信息
+            basic_info = data_source_manager.get_stock_basic_info(stock_code)
 
-            # 解析基本信息
-            info_dict = {}
-            for _, row in stock_individual_info.iterrows():
-                info_dict[row['item']] = row['value']
+            # 确保行业信息不为空
+            if not basic_info.get('industry') or basic_info['industry'] in ['', '-', 'nan', 'None']:
+                basic_info['industry'] = self._get_industry_fallback(stock_code)
 
-            # 标准化信息
-            basic_info = {
-                'stock_code': stock_code,
-                'stock_name': info_dict.get('股票简称', ''),
-                'market': 'sh' if stock_code.startswith('6') else 'sz',
-                'list_date': self._parse_date(info_dict.get('上市时间')),
-                'total_shares': self._parse_number(info_dict.get('总股本')),
-                'float_shares': self._parse_number(info_dict.get('流通股')),
-                'industry': info_dict.get('所属行业', '')
-            }
-
-            logger.info(f"获取股票 {stock_code} 基本信息成功")
+            logger.info(f"获取股票 {stock_code} 基本信息成功, 行业: {basic_info.get('industry', '未知')}")
             return basic_info
 
         except Exception as e:
             logger.error(f"获取股票 {stock_code} 基本信息失败: {e}")
             return None
+
+    def _get_industry_fallback(self, stock_code):
+        """获取行业信息的备用方法"""
+        try:
+            # 尝试从板块概念获取行业信息
+            industry_mapping = {
+                '60': '银行',
+                '00': '制造业',
+                '30': '创业板',
+                '68': '科创板'
+            }
+
+            # 根据股票代码前缀推断可能的行业
+            prefix = stock_code[:2]
+            if prefix in industry_mapping:
+                return industry_mapping[prefix]
+
+            # 尝试其他方式获取行业信息
+            try:
+                # 从东方财富获取实时数据，包含行业信息
+                real_data = ak.stock_zh_a_spot_em()
+                stock_data = real_data[real_data['代码'] == stock_code]
+                if not stock_data.empty and '所属行业' in stock_data.columns:
+                    industry = stock_data.iloc[0]['所属行业']
+                    if industry and industry not in ['', '-', 'nan']:
+                        return industry
+            except:
+                pass
+
+            # 最后的备用方案
+            return '未分类'
+
+        except Exception as e:
+            logger.warning(f"获取股票 {stock_code} 行业信息备用方案失败: {e}")
+            return '未分类'
 
     def get_stock_financial_data(self, stock_code, year=None):
         """获取股票财务数据"""
