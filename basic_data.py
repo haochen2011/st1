@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 基础数据管理模块
 负责股票基础数据（OHLCV）的获取、存储和管理
@@ -145,7 +143,7 @@ class BasicData:
             logger.error(f"从数据库获取基础数据失败: {e}")
             return pd.DataFrame()
 
-    def update_basic_data(self, stock_code, periods=None, force_update=False):
+    def update_basic_data(self, stock_code, periods=None, force_update=False, start_date=None):
         """更新基础数据"""
         if periods is None:
             periods = self.periods
@@ -163,7 +161,11 @@ class BasicData:
                                 logger.info(f"股票 {stock_code} {period} 周期数据已是最新，跳过更新")
                                 continue
 
-                    new_data = self.get_stock_data(stock_code, period)
+                    # 使用提供的start_date参数，如果没有则使用默认逻辑
+                    if start_date:
+                        new_data = self.get_stock_data(stock_code, period, start_date=start_date)
+                    else:
+                        new_data = self.get_stock_data(stock_code, period)
 
                     if not new_data.empty:
                         self.save_basic_data_to_db(new_data)
@@ -184,9 +186,9 @@ class BasicData:
         """获取最新的基础数据"""
         try:
             sql = """
-            SELECT * FROM basic_data 
-            WHERE stock_code = :stock_code AND period_type = :period 
-            ORDER BY trade_date DESC 
+            SELECT * FROM basic_data
+            WHERE stock_code = :stock_code AND period_type = :period
+            ORDER BY trade_date DESC
             LIMIT 1
             """
             params = {'stock_code': stock_code, 'period': period}
