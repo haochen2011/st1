@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 股票信息管理模块 (F10数据)
 负责股票基本信息的获取、存储和管理
@@ -10,7 +8,10 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 from loguru import logger
-from database import db_manager
+try:
+    from enhanced_database import enhanced_db_manager as db_manager
+except ImportError:
+    from database import db_manager
 from config import config
 
 
@@ -209,6 +210,136 @@ class StockInfo:
         except Exception as e:
             logger.error(f"计算股票 {stock_code} 市值失败: {e}")
             return None
+
+    def save_stock_info_to_db(self, stock_info_dict):
+        """保存单个股票信息到数据库（支持增强数据库管理器）"""
+        try:
+            if hasattr(db_manager, 'upsert_dataframe'):
+                # 使用增强数据库管理器的upsert功能
+                df = pd.DataFrame([stock_info_dict])
+                return db_manager.upsert_dataframe(
+                    df, 'stock_info',
+                    unique_columns=['stock_code']
+                )
+            else:
+                # 使用传统的SQL方式
+                sql = """
+                INSERT INTO stock_info (stock_code, stock_name, market, list_date, total_shares, float_shares, industry)
+                VALUES (:stock_code, :stock_name, :market, :list_date, :total_shares, :float_shares, :industry)
+                ON DUPLICATE KEY UPDATE
+                stock_name = VALUES(stock_name),
+                list_date = VALUES(list_date),
+                total_shares = VALUES(total_shares),
+                float_shares = VALUES(float_shares),
+                industry = VALUES(industry),
+                updated_at = CURRENT_TIMESTAMP
+                """
+                return db_manager.execute_sql(sql, stock_info_dict)
+
+        except Exception as e:
+            logger.error(f"保存股票信息到数据库失败: {e}")
+            return False
+
+    def batch_save_stock_info_to_db(self, stock_info_list):
+        """批量保存股票信息到数据库"""
+        try:
+            if not stock_info_list:
+                return False
+
+            # 转换为DataFrame
+            df = pd.DataFrame(stock_info_list)
+
+            if hasattr(db_manager, 'batch_insert_dataframe'):
+                # 使用增强数据库管理器的批量插入
+                return db_manager.batch_insert_dataframe(
+                    df, 'stock_info',
+                    if_exists='append',
+                    batch_size=100
+                )
+            else:
+                # 逐个插入
+                success_count = 0
+                for stock_info_dict in stock_info_list:
+                    if self.save_stock_info_to_db(stock_info_dict):
+                        success_count += 1
+
+                logger.info(f"批量保存完成: 成功 {success_count}/{len(stock_info_list)}")
+                return success_count > 0
+
+        except Exception as e:
+            logger.error(f"批量保存股票信息失败: {e}")
+            return False
+
+    def get_all_stock_codes_from_db(self):
+        """从数据库获取所有股票代码"""
+        try:
+            sql = "SELECT stock_code, stock_name, market FROM stock_info ORDER BY stock_code"
+            return db_manager.query_to_dataframe(sql)
+        except Exception as e:
+            logger.error(f"从数据库获取股票代码失败: {e}")
+            return pd.DataFrame()
+
+    def update_stock_industry_batch(self, stock_industry_dict):
+        """批量更新股票行业信息"""
+        try:
+            update_list = []
+            for stock_code, industry in stock_industry_dict.items():
+                update_list.append({
+                    'stock_code': stock_code,
+                    'industry': industry
+                })
+
+            if hasattr(db_manager, 'upsert_dataframe'):
+                df = pd.DataFrame(update_list)
+                return db_manager.upsert_dataframe(
+                    df, 'stock_info',
+                    unique_columns=['stock_code']
+                )
+            else:
+                # 传统方式更新
+                success_count = 0
+                for item in update_list:
+                    sql = """
+                    UPDATE stock_info
+                    SET industry = :industry, updated_at = CURRENT_TIMESTAMP
+                    WHERE stock_code = :stock_code
+                    """
+                    if db_manager.execute_sql(sql, item):
+                        success_count += 1
+
+                logger.info(f"批量更新行业信息完成: 成功 {success_count}/{len(update_list)}")
+                return success_count > 0
+
+        except Exception as e:
+            logger.error(f"批量更新股票行业信息失败: {e}")
+            return False
+
+    def get_stocks_by_market(self, market='all'):
+        """根据市场获取股票列表"""
+        try:
+            if market == 'all':
+                sql = "SELECT * FROM stock_info ORDER BY market, stock_code"
+                params = None
+            else:
+                sql = "SELECT * FROM stock_info WHERE market = :market ORDER BY stock_code"
+                params = {'market': market}
+
+            return db_manager.query_to_dataframe(sql, params)
+
+        except Exception as e:
+            logger.error(f"获取市场 {market} 股票列表失败: {e}")
+            return pd.DataFrame()
+
+    def get_stocks_by_industry(self, industry):
+        """根据行业获取股票列表"""
+        try:
+            sql = "SELECT * FROM stock_info WHERE industry = :industry ORDER BY stock_code"
+            params = {'industry': industry}
+            return db_manager.query_to_dataframe(sql, params)
+
+        except Exception as e:
+            logger.error(f"获取行业 {industry} 股票列表失败: {e}")
+            return pd.DataFrame()
 
 
 # 创建全局实例

@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 分笔数据管理模块
 负责股票分笔数据的获取、存储和管理
@@ -30,17 +28,30 @@ class TickData:
             trade_date = trade_date.strftime('%Y%m%d')
 
         try:
-            # 使用akshare获取分笔数据
-            tick_data = ak.stock_zh_a_tick_tx_js(symbol=stock_code)
+            # 方法1：使用akshare获取分笔数据
+            try:
+                tick_data = ak.stock_zh_a_tick_tx_js(symbol=stock_code)
+                if not tick_data.empty:
+                    # 标准化列名
+                    tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
+                    logger.info(f"获取股票 {stock_code} {trade_date} 分笔数据成功，共 {len(tick_data)} 条")
+                    return tick_data
+            except Exception as e1:
+                logger.warning(f"方法1获取分笔数据失败: {e1}")
 
-            if not tick_data.empty:
-                # 标准化列名
-                tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
-                logger.info(f"获取股票 {stock_code} {trade_date} 分笔数据成功，共 {len(tick_data)} 条")
-                return tick_data
-            else:
-                logger.warning(f"股票 {stock_code} {trade_date} 无分笔数据")
-                return pd.DataFrame()
+            # 方法2：尝试其他API
+            try:
+                tick_data = ak.stock_zh_a_tick_tx_js(symbol=f"sz{stock_code}" if not stock_code.startswith('6') else f"sh{stock_code}")
+                if not tick_data.empty:
+                    tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
+                    logger.info(f"获取股票 {stock_code} {trade_date} 分笔数据成功（方法2），共 {len(tick_data)} 条")
+                    return tick_data
+            except Exception as e2:
+                logger.warning(f"方法2获取分笔数据失败: {e2}")
+
+            # 如果都失败，返回空DataFrame并记录
+            logger.warning(f"股票 {stock_code} {trade_date} 无分笔数据或获取失败")
+            return pd.DataFrame()
 
         except Exception as e:
             logger.error(f"获取股票 {stock_code} {trade_date} 分笔数据失败: {e}")
