@@ -72,7 +72,7 @@ class StockInfo:
                 'list_date': self._parse_date(info_dict.get('上市时间')),
                 'total_shares': self._parse_number(info_dict.get('总股本')),
                 'float_shares': self._parse_number(info_dict.get('流通股')),
-                'industry': info_dict.get('所属行业', '')
+                'industry': info_dict.get('行业', '')
             }
 
             logger.info(f"获取股票 {stock_code} 基本信息成功")

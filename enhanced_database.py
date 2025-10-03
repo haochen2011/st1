@@ -99,48 +99,7 @@ class EnhancedDatabaseManager:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
 
-            # 基础数据表（K线数据）
-            basic_data_ddl = """
-            CREATE TABLE IF NOT EXISTS basic_data (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                stock_code VARCHAR(10) NOT NULL,
-                period VARCHAR(20) NOT NULL,
-                trade_date DATE NOT NULL,
-                trade_time DATETIME,
-                open_price DECIMAL(10,3),
-                high_price DECIMAL(10,3),
-                low_price DECIMAL(10,3),
-                close_price DECIMAL(10,3),
-                volume BIGINT,
-                amount DECIMAL(20,2),
-                turnover_rate DECIMAL(8,4),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY uk_stock_period_date (stock_code, period, trade_date),
-                INDEX idx_stock_code (stock_code),
-                INDEX idx_period (period),
-                INDEX idx_trade_date (trade_date),
-                INDEX idx_stock_period (stock_code, period)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """
 
-            # 分笔数据表
-            tick_data_ddl = """
-            CREATE TABLE IF NOT EXISTS tick_data (
-                id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                stock_code VARCHAR(10) NOT NULL,
-                trade_date DATE NOT NULL,
-                trade_time DATETIME NOT NULL,
-                price DECIMAL(10,3),
-                price_change DECIMAL(10,3),
-                volume INT,
-                amount DECIMAL(15,2),
-                trade_type VARCHAR(20),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_stock_date (stock_code, trade_date),
-                INDEX idx_trade_time (trade_time),
-                INDEX idx_stock_code (stock_code)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """
 
             # 技术指标表
             indicator_data_ddl = """
@@ -165,8 +124,6 @@ class EnhancedDatabaseManager:
             with self.engine.connect() as conn:
                 with conn.begin():
                     conn.execute(text(stock_info_ddl))
-                    conn.execute(text(basic_data_ddl))
-                    conn.execute(text(tick_data_ddl))
                     conn.execute(text(indicator_data_ddl))
 
             logger.info("数据库表结构创建/验证完成")
@@ -174,6 +131,105 @@ class EnhancedDatabaseManager:
         except Exception as e:
             logger.error(f"创建数据库表失败: {e}")
             raise
+
+    def create_tick_data_table(self, trade_date):
+        """创建按日期分表的分笔数据表"""
+        try:
+            # 格式化日期为字符串，例如：tick_data_20251002
+            if isinstance(trade_date, str):
+                date_str = trade_date.replace('-', '')
+            else:
+                date_str = trade_date.strftime('%Y%m%d')
+
+            table_name = f"tick_data_{date_str}"
+
+            tick_data_ddl = f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                stock_code VARCHAR(10) NOT NULL,
+                trade_date DATE NOT NULL,
+                trade_time DATETIME NOT NULL,
+                price DECIMAL(10,3),
+                price_change DECIMAL(10,3),
+                volume INT,
+                amount DECIMAL(15,2),
+                trade_type VARCHAR(20),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_stock_date (stock_code, trade_date),
+                INDEX idx_trade_time (trade_time),
+                INDEX idx_stock_code (stock_code)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+
+            with self.engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text(tick_data_ddl))
+
+            logger.info(f"分笔数据表 {table_name} 创建成功")
+            return table_name
+
+        except Exception as e:
+            logger.error(f"创建分笔数据表失败: {e}")
+            return None
+
+    def create_basic_data_table(self, period):
+        """创建按周期分表的基础数据表"""
+        try:
+            # 支持的周期：1min,5min,10min,15min,30min,1hour,daily,week,month,quarter,half-year,year
+            valid_periods = ['1min', '5min', '10min', '15min', '30min', '1hour',
+                           'daily', 'week', 'month', 'quarter', 'half-year', 'year']
+
+            if period not in valid_periods:
+                logger.error(f"不支持的周期: {period}")
+                return None
+
+            # 将period中的特殊字符替换为下划线
+            safe_period = period.replace('-', '_')
+            table_name = f"basic_data_{safe_period}"
+
+            basic_data_ddl = f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                stock_code VARCHAR(10) NOT NULL,
+                trade_date DATE NOT NULL,
+                trade_time DATETIME,
+                open_price DECIMAL(10,3),
+                high_price DECIMAL(10,3),
+                low_price DECIMAL(10,3),
+                close_price DECIMAL(10,3),
+                volume BIGINT,
+                amount DECIMAL(20,2),
+                turnover_rate DECIMAL(8,4),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uk_stock_date (stock_code, trade_date),
+                INDEX idx_stock_code (stock_code),
+                INDEX idx_trade_date (trade_date)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """
+
+            with self.engine.connect() as conn:
+                with conn.begin():
+                    conn.execute(text(basic_data_ddl))
+
+            logger.info(f"基础数据表 {table_name} 创建成功")
+            return table_name
+
+        except Exception as e:
+            logger.error(f"创建基础数据表失败: {e}")
+            return None
+
+    def get_tick_table_name(self, trade_date):
+        """获取分笔数据表名"""
+        if isinstance(trade_date, str):
+            date_str = trade_date.replace('-', '')
+        else:
+            date_str = trade_date.strftime('%Y%m%d')
+        return f"tick_data_{date_str}"
+
+    def get_basic_table_name(self, period):
+        """获取基础数据表名"""
+        safe_period = period.replace('-', '_')
+        return f"basic_data_{safe_period}"
 
     def batch_insert_dataframe(self,
                                df: pd.DataFrame,
@@ -356,7 +412,7 @@ class EnhancedDatabaseManager:
         """获取表信息"""
         try:
             sql = f"""
-            SELECT 
+            SELECT
                 COUNT(*) as total_rows,
                 MIN(created_at) as earliest_data,
                 MAX(created_at) as latest_data
@@ -393,7 +449,7 @@ class EnhancedDatabaseManager:
         """清理旧数据"""
         try:
             sql = f"""
-            DELETE FROM {table_name} 
+            DELETE FROM {table_name}
             WHERE {date_column} < DATE_SUB(NOW(), INTERVAL {days_to_keep} DAY)
             """
 
@@ -407,6 +463,41 @@ class EnhancedDatabaseManager:
 
         except Exception as e:
             logger.error(f"清理旧数据失败: {e}")
+            return False
+
+    def batch_insert_to_dynamic_table(self,
+                                     df: pd.DataFrame,
+                                     table_type: str,
+                                     date_or_period: str,
+                                     if_exists: str = 'append',
+                                     batch_size: int = 1000,
+                                     method: str = 'multi') -> bool:
+        """
+        批量插入数据到动态表中
+
+        Args:
+            df: 要插入的DataFrame
+            table_type: 表类型 ('tick' 或 'basic')
+            date_or_period: 日期（分笔数据）或周期（基础数据）
+            if_exists: 如果表存在时的操作
+            batch_size: 批次大小
+            method: 插入方法
+        """
+        try:
+            if table_type == 'tick':
+                table_name = self.create_tick_data_table(date_or_period)
+            elif table_type == 'basic':
+                table_name = self.create_basic_data_table(date_or_period)
+            else:
+                raise ValueError(f"不支持的表类型: {table_type}")
+
+            if not table_name:
+                return False
+
+            return self.batch_insert_dataframe(df, table_name, if_exists, batch_size, method)
+
+        except Exception as e:
+            logger.error(f"批量插入数据到动态表失败: {e}")
             return False
 
     def close(self):

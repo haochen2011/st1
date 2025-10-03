@@ -53,37 +53,34 @@ class BatchProcessor:
 
             # 方法1：直接使用akshare获取所有A股现货数据
             try:
-                all_stocks_df = ak.stock_zh_a_spot_em()
+                all_stocks_df = ak.stock_zh_a_spot()
 
                 if not all_stocks_df.empty:
                     logger.info(f"股票数据列名: {list(all_stocks_df.columns)}")
 
-                    # 过滤A股股票（以0、3、6开头的代码）
-                    stock_filter = all_stocks_df['代码'].str.match(r'^[036]')
+                    # 截取代码后6位并新增列存储
+                    all_stocks_df['代码后6位'] = all_stocks_df['代码'].str.slice(-6)
+
+                    # 筛选后6位以0、3、6开头的股票
+                    stock_filter = all_stocks_df['代码后6位'].str.match(r'^[036]')
                     filtered_stocks = all_stocks_df[stock_filter].copy()
 
-                    # 标准化数据
-                    stock_list = []
-                    for _, row in filtered_stocks.iterrows():
-                        stock_code = row['代码']
-                        stock_name = row['名称']
+                    # 将原始"代码"列替换为截取后的6位数字
+                    filtered_stocks['代码'] = filtered_stocks['代码后6位']
 
-                        # 判断市场
-                        if stock_code.startswith('6'):
-                            market = 'sh'  # 上海
-                        elif stock_code.startswith(('0', '3')):
-                            market = 'sz'  # 深圳
-                        else:
-                            continue  # 跳过其他代码
-
-                        stock_list.append({
-                            'stock_code': stock_code,
-                            'stock_name': stock_name,
-                            'market': market
-                        })
+                    # 删除临时的"代码后6位"列（可选）
+                    filtered_stocks = filtered_stocks.drop(columns=['代码后6位'])
+                    filtered_stocks['market'] = np.where(
+                        filtered_stocks['代码'].str.startswith('6')
+                    )
+                    # 直接转为字典列表
+                    stock_list = filtered_stocks[['代码', '名称', 'market']].rename(
+                        columns={'代码': 'stock_code', '名称': 'stock_name'}
+                    ).to_dict('records')
 
                     if stock_list:
                         logger.info(f"获取股票列表成功，共 {len(stock_list)} 只股票")
+
                         self._save_stock_list(stock_list)
                         return stock_list
 

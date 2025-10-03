@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Union
 import json
 import schedule
 import threading
+import pandas as pd
 from loguru import logger
 
 # 添加当前目录到Python路径
@@ -332,13 +333,24 @@ class StockDataManager:
                 value = stock_info_df.iloc[0][col]
                 print(f"{col}: {value}")
 
-            # 查询最新交易数据
-            latest_sql = """
-            SELECT * FROM basic_data 
-            WHERE stock_code = :stock_code AND period = 'daily'
-            ORDER BY trade_date DESC LIMIT 5
+            # 查询最新交易数据（从daily表中查询）
+            table_name = self.db_manager.get_basic_table_name('daily')
+
+            # 检查表是否存在
+            check_sql = f"""
+            SELECT COUNT(*) as count FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = '{table_name}'
             """
-            latest_data = self.db_manager.query_to_dataframe(latest_sql, {'stock_code': stock_code})
+            table_exists = self.db_manager.query_to_dataframe(check_sql)
+
+            latest_data = pd.DataFrame()
+            if not table_exists.empty and table_exists.iloc[0]['count'] > 0:
+                latest_sql = f"""
+                SELECT * FROM {table_name}
+                WHERE stock_code = :stock_code
+                ORDER BY trade_date DESC LIMIT 5
+                """
+                latest_data = self.db_manager.query_to_dataframe(latest_sql, {'stock_code': stock_code})
 
             if not latest_data.empty:
                 print(f"\n📈 最新交易数据 (前5天):")
@@ -365,35 +377,64 @@ class StockDataManager:
             print(f"\n📈 股票基本信息:")
             print(f"   总股票数: {stock_info_stats.get('total_rows', 0)}")
 
-            # 基础数据统计
-            basic_data_stats = self.db_manager.get_table_info('basic_data')
-            print(f"\n📉 基础数据:")
-            print(f"   总记录数: {basic_data_stats.get('total_rows', 0)}")
-            print(f"   最早数据: {basic_data_stats.get('earliest_data', 'N/A')}")
-            print(f"   最新数据: {basic_data_stats.get('latest_data', 'N/A')}")
-
-            # 分笔数据统计
-            tick_data_stats = self.db_manager.get_table_info('tick_data')
-            print(f"\n⏰ 分笔数据:")
-            print(f"   总记录数: {tick_data_stats.get('total_rows', 0)}")
-            print(f"   最早数据: {tick_data_stats.get('earliest_data', 'N/A')}")
-            print(f"   最新数据: {tick_data_stats.get('latest_data', 'N/A')}")
-
-            # 详细统计
-            detail_sql = """
-            SELECT 
-                (SELECT COUNT(DISTINCT stock_code) FROM basic_data WHERE period = 'daily') as stocks_with_daily,
-                (SELECT COUNT(DISTINCT stock_code) FROM tick_data) as stocks_with_tick,
-                (SELECT COUNT(DISTINCT trade_date) FROM basic_data WHERE period = 'daily') as trading_days,
-                (SELECT market, COUNT(*) as cnt FROM stock_info GROUP BY market ORDER BY cnt DESC LIMIT 1) as largest_market
+            # 基础数据统计（查询daily表）
+            daily_table_name = self.db_manager.get_basic_table_name('daily')
+            check_daily_sql = f"""
+            SELECT COUNT(*) as count FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = '{daily_table_name}'
             """
-            detail_stats = self.db_manager.query_to_dataframe(detail_sql)
+            daily_exists = self.db_manager.query_to_dataframe(check_daily_sql)
 
-            if not detail_stats.empty:
-                print(f"\n📊 详细统计:")
-                print(f"   有日线数据的股票: {detail_stats.iloc[0]['stocks_with_daily']}")
-                print(f"   有分笔数据的股票: {detail_stats.iloc[0]['stocks_with_tick']}")
-                print(f"   交易日天数: {detail_stats.iloc[0]['trading_days']}")
+            if not daily_exists.empty and daily_exists.iloc[0]['count'] > 0:
+                basic_data_stats = self.db_manager.get_table_info(daily_table_name)
+                print(f"\n📉 基础数据 (日线):")
+                print(f"   总记录数: {basic_data_stats.get('total_rows', 0)}")
+                print(f"   最早数据: {basic_data_stats.get('earliest_data', 'N/A')}")
+                print(f"   最新数据: {basic_data_stats.get('latest_data', 'N/A')}")
+            else:
+                print(f"\n📉 基础数据 (日线): 暂无数据")
+
+            # 分笔数据统计（查询所有分笔表）
+            check_tick_sql = """
+            SELECT COUNT(*) as count FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name LIKE 'tick_data_%'
+            """
+            tick_tables_exist = self.db_manager.query_to_dataframe(check_tick_sql)
+
+            if not tick_tables_exist.empty and tick_tables_exist.iloc[0]['count'] > 0:
+                # 统计所有分笔数据表的总记录数
+                all_tick_sql = """
+                SELECT
+                    SUM(table_rows) as total_rows
+                FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_name LIKE 'tick_data_%'
+                """
+                tick_stats = self.db_manager.query_to_dataframe(all_tick_sql)
+                print(f"\n⏰ 分笔数据:")
+                print(f"   总记录数: {tick_stats.iloc[0]['total_rows'] if not tick_stats.empty else 0}")
+                print(f"   分表数量: {tick_tables_exist.iloc[0]['count']}")
+            else:
+                print(f"\n⏰ 分笔数据: 暂无数据")
+
+            # 详细统计（适应新表结构）
+            if not daily_exists.empty and daily_exists.iloc[0]['count'] > 0:
+                detail_sql = f"""
+                SELECT
+                    (SELECT COUNT(DISTINCT stock_code) FROM {daily_table_name}) as stocks_with_daily,
+                    (SELECT COUNT(DISTINCT trade_date) FROM {daily_table_name}) as trading_days
+                """
+                detail_stats = self.db_manager.query_to_dataframe(detail_sql)
+
+                if not detail_stats.empty:
+                    print(f"\n📊 详细统计:")
+                    print(f"   有日线数据的股票: {detail_stats.iloc[0]['stocks_with_daily']}")
+                    print(f"   交易日天数: {detail_stats.iloc[0]['trading_days']}")
+
+                    # 统计分笔数据表数量
+                    if not tick_tables_exist.empty and tick_tables_exist.iloc[0]['count'] > 0:
+                        print(f"   分笔数据日期数: {tick_tables_exist.iloc[0]['count']}")
+            else:
+                print(f"\n📊 详细统计: 暂无数据")
 
         except Exception as e:
             logger.error(f"获取数据库统计失败: {e}")
@@ -412,10 +453,37 @@ class StockDataManager:
         try:
             if choice == '1':
                 print("开始优化表...")
-                tables = ['stock_info', 'basic_data', 'tick_data', 'indicator_data']
-                for table in tables:
+
+                # 优化基础表
+                basic_tables = ['stock_info', 'indicator_data']
+                for table in basic_tables:
                     print(f"优化表: {table}")
                     self.db_manager.optimize_table(table)
+
+                # 优化基础数据表（按周期）
+                periods = config.get_periods()
+                for period in periods:
+                    table_name = self.db_manager.get_basic_table_name(period)
+                    check_sql = f"""
+                    SELECT COUNT(*) as count FROM information_schema.tables
+                    WHERE table_schema = DATABASE() AND table_name = '{table_name}'
+                    """
+                    table_exists = self.db_manager.query_to_dataframe(check_sql)
+                    if not table_exists.empty and table_exists.iloc[0]['count'] > 0:
+                        print(f"优化表: {table_name}")
+                        self.db_manager.optimize_table(table_name)
+
+                # 优化分笔数据表
+                tick_tables_sql = """
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_name LIKE 'tick_data_%'
+                """
+                tick_tables = self.db_manager.query_to_dataframe(tick_tables_sql)
+                for _, row in tick_tables.iterrows():
+                    table_name = row['table_name']
+                    print(f"优化表: {table_name}")
+                    self.db_manager.optimize_table(table_name)
+
                 print("✅ 表优化完成")
 
             elif choice == '2':
@@ -544,9 +612,33 @@ class StockDataManager:
                 days = int(input("保留最近多少天的分笔数据? (默认365): ").strip() or "365")
                 confirm = input(f"确认清理超过{days}天的分笔数据? (yes/no): ").strip().lower()
                 if confirm == 'yes':
-                    result = self.db_manager.cleanup_old_data('tick_data', 'trade_date', days)
-                    if result:
-                        print("✅ 分笔数据清理完成")
+                    # 清理旧的分笔数据表
+                    from datetime import datetime, timedelta
+                    cutoff_date = datetime.now() - timedelta(days=days)
+
+                    # 查询所有分笔数据表
+                    tables_sql = """
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_schema = DATABASE() AND table_name LIKE 'tick_data_%'
+                    """
+                    tables_result = self.db_manager.query_to_dataframe(tables_sql)
+
+                    deleted_tables = 0
+                    for _, row in tables_result.iterrows():
+                        table_name = row['table_name']
+                        # 从表名中提取日期
+                        date_str = table_name.replace('tick_data_', '')
+                        try:
+                            table_date = datetime.strptime(date_str, '%Y%m%d')
+                            if table_date < cutoff_date:
+                                drop_sql = f"DROP TABLE {table_name}"
+                                self.db_manager.execute_sql(drop_sql)
+                                deleted_tables += 1
+                                logger.info(f"删除过期分笔数据表: {table_name}")
+                        except ValueError:
+                            continue
+
+                    print(f"✅ 分笔数据清理完成，删除了 {deleted_tables} 个过期表")
 
             elif choice == '2':
                 print("清理无效股票数据功能开发中...")

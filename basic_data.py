@@ -99,31 +99,61 @@ class BasicData:
             return data
 
     def save_basic_data_to_db(self, basic_data):
-        """保存基础数据到数据库"""
+        """保存基础数据到数据库（按周期分表）"""
         if basic_data.empty:
             logger.warning("基础数据为空，跳过保存")
             return
 
         try:
-            columns = ['stock_code', 'trade_date', 'period_type', 'open_price', 'close_price', 'high_price',
+            # 更新列名，移除period_type，因为周期信息已经在表名中
+            columns = ['stock_code', 'trade_date', 'trade_time', 'open_price', 'close_price', 'high_price',
                        'low_price', 'volume', 'amount', 'change_price', 'change_pct', 'turnover_rate']
 
+            # 确保所有列都存在
             for col in columns:
                 if col not in basic_data.columns:
-                    basic_data[col] = None
+                    if col == 'trade_time':
+                        basic_data[col] = None  # 对于分钟级数据会有具体时间
+                    else:
+                        basic_data[col] = None
 
-            db_data = basic_data[columns].copy()
-            db_manager.insert_dataframe(db_data, 'basic_data', if_exists='append')
-            logger.info(f"成功保存 {len(db_data)} 条基础数据到数据库")
+            # 按周期分组保存到不同的表
+            if 'period_type' in basic_data.columns:
+                for period, group_data in basic_data.groupby('period_type'):
+                    db_data = group_data[columns].copy()
+
+                    # 使用新的动态表插入方法
+                    success = db_manager.insert_dataframe_to_dynamic_table(
+                        db_data, 'basic', period, if_exists='append'
+                    )
+                    if success:
+                        logger.info(f"成功保存 {len(db_data)} 条基础数据到表 {db_manager.get_basic_table_name(period)}")
+                    else:
+                        logger.error(f"保存周期 {period} 的基础数据失败")
+            else:
+                logger.error("基础数据缺少period_type列，无法确定保存到哪个表")
 
         except Exception as e:
             logger.error(f"保存基础数据到数据库失败: {e}")
 
     def get_basic_data_from_db(self, stock_code, period='daily', start_date=None, end_date=None):
-        """从数据库获取基础数据"""
+        """从数据库获取基础数据（从按周期分表中查询）"""
         try:
-            sql = "SELECT * FROM basic_data WHERE stock_code = :stock_code AND period_type = :period"
-            params = {'stock_code': stock_code, 'period': period}
+            table_name = db_manager.get_basic_table_name(period)
+
+            # 检查表是否存在
+            check_sql = f"""
+            SELECT COUNT(*) as count FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = '{table_name}'
+            """
+            table_exists = db_manager.query_to_dataframe(check_sql)
+
+            if table_exists.empty or table_exists.iloc[0]['count'] == 0:
+                logger.warning(f"表 {table_name} 不存在")
+                return pd.DataFrame()
+
+            sql = f"SELECT * FROM {table_name} WHERE stock_code = :stock_code"
+            params = {'stock_code': stock_code}
 
             if start_date:
                 sql += " AND trade_date >= :start_date"
@@ -136,6 +166,11 @@ class BasicData:
             sql += " ORDER BY trade_date"
 
             basic_data = db_manager.query_to_dataframe(sql, params)
+
+            # 添加period_type列以保持向后兼容
+            if not basic_data.empty:
+                basic_data['period_type'] = period
+
             logger.info(f"从数据库获取股票 {stock_code} {period} 周期基础数据成功，共 {len(basic_data)} 条")
             return basic_data
 
@@ -185,14 +220,33 @@ class BasicData:
     def get_latest_data(self, stock_code, period='daily'):
         """获取最新的基础数据"""
         try:
-            sql = """
-            SELECT * FROM basic_data
-            WHERE stock_code = :stock_code AND period_type = :period
+            table_name = db_manager.get_basic_table_name(period)
+
+            # 检查表是否存在
+            check_sql = f"""
+            SELECT COUNT(*) as count FROM information_schema.tables
+            WHERE table_schema = DATABASE() AND table_name = '{table_name}'
+            """
+            table_exists = db_manager.query_to_dataframe(check_sql)
+
+            if table_exists.empty or table_exists.iloc[0]['count'] == 0:
+                logger.warning(f"表 {table_name} 不存在")
+                return pd.DataFrame()
+
+            sql = f"""
+            SELECT * FROM {table_name}
+            WHERE stock_code = :stock_code
             ORDER BY trade_date DESC
             LIMIT 1
             """
-            params = {'stock_code': stock_code, 'period': period}
-            return db_manager.query_to_dataframe(sql, params)
+            params = {'stock_code': stock_code}
+            result = db_manager.query_to_dataframe(sql, params)
+
+            # 添加period_type列以保持向后兼容
+            if not result.empty:
+                result['period_type'] = period
+
+            return result
 
         except Exception as e:
             logger.error(f"获取最新基础数据失败: {e}")

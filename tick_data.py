@@ -152,7 +152,7 @@ class TickData:
             return pd.DataFrame()
 
     def save_tick_data_to_db(self, tick_data):
-        """保存分笔数据到数据库"""
+        """保存分笔数据到数据库（按日期分表）"""
         if tick_data.empty:
             logger.warning("分笔数据为空，跳过保存")
             return
@@ -163,32 +163,69 @@ class TickData:
                        'trade_date']
             db_data = tick_data[columns].copy()
 
-            # 插入数据库
-            db_manager.insert_dataframe(db_data, 'tick_data', if_exists='append')
-            logger.info(f"成功保存 {len(db_data)} 条分笔数据到数据库")
+            # 按交易日期分组保存到不同的表
+            for trade_date, group_data in db_data.groupby('trade_date'):
+                # 使用新的动态表插入方法
+                success = db_manager.insert_dataframe_to_dynamic_table(
+                    group_data, 'tick', trade_date, if_exists='append'
+                )
+                if success:
+                    logger.info(f"成功保存 {len(group_data)} 条分笔数据到表 {db_manager.get_tick_table_name(trade_date)}")
+                else:
+                    logger.error(f"保存日期 {trade_date} 的分笔数据失败")
 
         except Exception as e:
             logger.error(f"保存分笔数据到数据库失败: {e}")
 
     def get_tick_data_from_db(self, stock_code, start_date=None, end_date=None):
-        """从数据库获取分笔数据"""
+        """从数据库获取分笔数据（从按日期分表中查询）"""
         try:
-            sql = "SELECT * FROM tick_data WHERE stock_code = :stock_code"
-            params = {'stock_code': stock_code}
+            from datetime import datetime, timedelta
 
-            if start_date:
-                sql += " AND trade_date >= :start_date"
-                params['start_date'] = start_date
+            # 确定查询的日期范围
+            if start_date is None:
+                start_date = datetime.now().date()
+            elif isinstance(start_date, str):
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
 
-            if end_date:
-                sql += " AND trade_date <= :end_date"
-                params['end_date'] = end_date
+            if end_date is None:
+                end_date = start_date
+            elif isinstance(end_date, str):
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
 
-            sql += " ORDER BY trade_time"
+            all_data = []
+            current_date = start_date
 
-            tick_data = db_manager.query_to_dataframe(sql, params)
-            logger.info(f"从数据库获取股票 {stock_code} 分笔数据成功，共 {len(tick_data)} 条")
-            return tick_data
+            # 遍历日期范围，从各个分表中查询数据
+            while current_date <= end_date:
+                table_name = db_manager.get_tick_table_name(current_date)
+
+                # 检查表是否存在
+                check_sql = f"""
+                SELECT COUNT(*) as count FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_name = '{table_name}'
+                """
+                table_exists = db_manager.query_to_dataframe(check_sql)
+
+                if not table_exists.empty and table_exists.iloc[0]['count'] > 0:
+                    sql = f"SELECT * FROM {table_name} WHERE stock_code = :stock_code ORDER BY trade_time"
+                    params = {'stock_code': stock_code}
+
+                    daily_data = db_manager.query_to_dataframe(sql, params)
+                    if not daily_data.empty:
+                        all_data.append(daily_data)
+
+                current_date += timedelta(days=1)
+
+            # 合并所有数据
+            if all_data:
+                tick_data = pd.concat(all_data, ignore_index=True)
+                tick_data = tick_data.sort_values('trade_time')
+                logger.info(f"从数据库获取股票 {stock_code} 分笔数据成功，共 {len(tick_data)} 条")
+                return tick_data
+            else:
+                logger.info(f"未找到股票 {stock_code} 在指定日期范围的分笔数据")
+                return pd.DataFrame()
 
         except Exception as e:
             logger.error(f"从数据库获取分笔数据失败: {e}")
