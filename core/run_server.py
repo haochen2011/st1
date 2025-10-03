@@ -15,7 +15,9 @@ from loguru import logger
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from config import config
+import configparser
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+from core.config import config
 from utils.indicator_api import indicator_api
 from export.export_api import export_api
 

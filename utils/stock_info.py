@@ -9,10 +9,10 @@ import numpy as np
 from datetime import datetime, date
 from loguru import logger
 try:
-    from ..data.enhanced_database import enhanced_db_manager as db_manager
+    from data.enhanced_database import enhanced_db_manager as db_manager
 except ImportError:
-    from ..data.database import db_manager
-from ..core.config import config
+    from data.database import db_manager
+from core.config import config
 
 
 class StockInfo:
@@ -192,7 +192,7 @@ class StockInfo:
 
             if price is None:
                 # 获取最新价格
-                from basic_data import BasicData
+                from data.basic_data import BasicData
                 basic_data = BasicData()
                 latest_data = basic_data.get_latest_data(stock_code)
                 if latest_data.empty:

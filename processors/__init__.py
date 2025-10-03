@@ -3,14 +3,14 @@
 包含各种数据处理器
 """
 
-from basic_processor import BasicProcessor
-from batch_processor import batch_processor
-from indicator_processor import IndicatorProcessor
-from tick_processor import TickProcessor
+from .basic_processor import basic_processor
+from .batch_processor import batch_processor
+from .indicator_processor import indicator_processor
+from .tick_processor import TickProcessor
 
 __all__ = [
-    'BasicProcessor',
+    'basic_processor',
     'batch_processor',
-    'IndicatorProcessor',
-    'TickProcessor'
+    'indicator_processor',
+    'tick_processor'
 ]

@@ -189,4 +189,8 @@ def main():
 
 
 if __name__ == '__main__':
+    try:
+        from processors.basic_processor import basic_processor
+    except ImportError as e:
+        print(f"导入basic_processor模块失败: {e}")
     main()

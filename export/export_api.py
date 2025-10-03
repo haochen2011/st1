@@ -9,7 +9,7 @@ from flask import Blueprint, request, jsonify, send_file
 from datetime import datetime, date
 import os
 from loguru import logger
-from data_export import data_exporter
+from export.data_export import data_exporter
 
 export_api = Blueprint('export_api', __name__, url_prefix='/api/export')
 

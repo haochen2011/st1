@@ -23,13 +23,13 @@ from loguru import logger
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # 导入自定义模块
-from ..processors.batch_processor import batch_processor
-from ..data.enhanced_database import enhanced_db_manager
-from ..export.enhanced_excel_exporter import enhanced_excel_exporter
-from ..core.config import config
-from .stock_info import stock_info
-from tick_data import tick_data
-from basic_data import basic_data
+from processors.batch_processor import batch_processor
+from data.enhanced_database import enhanced_db_manager
+from export.enhanced_excel_exporter import enhanced_excel_exporter
+from core.config import config
+from stock_info import stock_info
+from data.tick_data import tick_data
+from data.basic_data import basic_data
 
 
 class StockDataManager:
@@ -590,7 +590,7 @@ class StockDataManager:
         """启动Web API服务"""
         print("\n📱 启动Web API服务...")
         try:
-            from run_server import app
+            from core.run_server import app
             print("Web API服务启动中...")
             print("访问地址: http://localhost:5000")
             app.run(host='0.0.0.0', port=5000, debug=False)

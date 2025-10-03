@@ -6,11 +6,11 @@
 from .stock_info import stock_info
 from .technical_indicators import technical_analyzer
 from .stock_data_manager import StockDataManager
-from .indicator_api import IndicatorAPI
+from .indicator_api import indicator_api
 
 __all__ = [
     'stock_info',
     'technical_analyzer',
     'StockDataManager',
-    'IndicatorAPI'
+    'indicator_api'
 ]

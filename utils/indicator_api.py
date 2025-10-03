@@ -8,8 +8,8 @@
 from flask import Blueprint, request, jsonify
 from datetime import datetime, date
 from loguru import logger
-from indicator_processor import indicator_processor
-from database import db_manager
+from processors.indicator_processor import indicator_processor
+from data.database import db_manager
 
 indicator_api = Blueprint('indicator_api', __name__, url_prefix='/api/indicator')
 

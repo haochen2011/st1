@@ -13,7 +13,10 @@ from pathlib import Path
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-
+# 新增：打印Python搜索路径，检查是否包含目标目录
+print("当前Python搜索路径:")
+for path in sys.path:
+    print(f"  - {path}")
 def check_environment():
     """检查运行环境"""
     print("🔍 检查运行环境...")
@@ -366,4 +369,8 @@ def main():
 
 
 if __name__ == '__main__':
+    try:
+        from processors.basic_processor import basic_processor
+    except ImportError as e:
+        print(f"导入basic_processor模块失败: {e}")
     main()

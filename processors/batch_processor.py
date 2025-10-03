@@ -8,19 +8,15 @@ import akshare as ak
 import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
-import asyncio
-import aiohttp
 import concurrent.futures
 from threading import Lock
 import time
-import os
 from pathlib import Path
 from loguru import logger
 from tqdm import tqdm
 import json
 from typing import List, Dict, Optional, Union
-from ..data.database import db_manager
-from core.config import config
+from data.database import db_manager
 from utils.stock_info import stock_info
 from data.tick_data import tick_data
 from data.basic_data import basic_data
