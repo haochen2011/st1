@@ -122,7 +122,7 @@ class EnhancedExcelExporter:
             sql = """
             SELECT stock_code, stock_name, market, industry, list_date,
                    total_shares, float_shares
-            FROM stock_info 
+            FROM stock_info
             ORDER BY market, stock_code
             """
 
@@ -159,7 +159,7 @@ class EnhancedExcelExporter:
             sql = """
             SELECT stock_code, stock_name, market, industry, list_date,
                    total_shares, float_shares, updated_at
-            FROM stock_info 
+            FROM stock_info
             ORDER BY market, stock_code
             """
 
@@ -226,11 +226,11 @@ class EnhancedExcelExporter:
             sql = f"""
             SELECT b.stock_code, s.stock_name, s.market, s.industry,
                    b.close_price, b.volume, b.amount, b.turnover_rate,
-                   ROUND((b.close_price - LAG(b.close_price) OVER (PARTITION BY b.stock_code ORDER BY b.trade_date)) / 
+                   ROUND((b.close_price - LAG(b.close_price) OVER (PARTITION BY b.stock_code ORDER BY b.trade_date)) /
                          LAG(b.close_price) OVER (PARTITION BY b.stock_code ORDER BY b.trade_date) * 100, 2) as price_change_pct
             FROM basic_data b
             LEFT JOIN stock_info s ON b.stock_code = s.stock_code
-            WHERE b.period = 'daily' 
+            WHERE b.period = 'daily'
               AND b.trade_date = '{latest_date}'
               AND b.close_price > 0
             ORDER BY b.amount DESC
@@ -290,8 +290,8 @@ class EnhancedExcelExporter:
             # 获取热门股票（按成交额排序，取前50只）
             sql = f"""
             SELECT stock_code, AVG(amount) as avg_amount
-            FROM basic_data 
-            WHERE period = 'daily' 
+            FROM basic_data
+            WHERE period = 'daily'
               AND trade_date >= DATE_SUB(CURDATE(), INTERVAL {recent_days} DAY)
             GROUP BY stock_code
             ORDER BY avg_amount DESC
@@ -310,7 +310,7 @@ class EnhancedExcelExporter:
                        b.volume, b.amount, b.turnover_rate
                 FROM basic_data b
                 LEFT JOIN stock_info s ON b.stock_code = s.stock_code
-                WHERE b.period = 'daily' 
+                WHERE b.period = 'daily'
                   AND b.stock_code IN ('{stock_codes}')
                   AND b.trade_date >= DATE_SUB(CURDATE(), INTERVAL {recent_days} DAY)
                 ORDER BY b.stock_code, b.trade_date DESC
@@ -366,12 +366,12 @@ class EnhancedExcelExporter:
 
             # 获取技术指标数据
             sql = """
-            SELECT i.stock_code, s.stock_name, i.indicator_name, 
+            SELECT i.stock_code, s.stock_name, i.indicator_name,
                    i.indicator_value, i.trade_date
             FROM indicator_data i
             LEFT JOIN stock_info s ON i.stock_code = s.stock_code
             WHERE i.trade_date = (
-                SELECT MAX(trade_date) FROM indicator_data 
+                SELECT MAX(trade_date) FROM indicator_data
                 WHERE stock_code = i.stock_code AND indicator_name = i.indicator_name
             )
             ORDER BY i.stock_code, i.indicator_name
@@ -417,6 +417,53 @@ class EnhancedExcelExporter:
         except Exception as e:
             logger.error(f"导出技术指标摘要失败: {e}")
 
+    def _get_tick_data_statistics(self):
+        """获取分笔数据统计信息"""
+        try:
+            # 查找所有tick_data表
+            tables_sql = """
+            SHOW TABLES LIKE 'tick_data_%'
+            """
+            tables_result = enhanced_db_manager.query_to_dataframe(tables_sql)
+
+            if tables_result.empty:
+                return {'stocks_with_tick_data': 0, 'latest_tick_date': None}
+
+            # 找到最新的表
+            table_names = []
+            for _, row in tables_result.iterrows():
+                table_name = list(row.values)[0]  # 获取表名
+                if 'tick_data_' in table_name:
+                    table_names.append(table_name)
+
+            if not table_names:
+                return {'stocks_with_tick_data': 0, 'latest_tick_date': None}
+
+            # 按日期排序，获取最新的表
+            table_names.sort(reverse=True)
+            latest_table = table_names[0]
+
+            # 获取统计信息
+            stats_sql = f"""
+            SELECT
+                COUNT(DISTINCT stock_code) as stocks_with_tick_data,
+                MAX(trade_date) as latest_tick_date
+            FROM {latest_table}
+            """
+
+            result = enhanced_db_manager.query_to_dataframe(stats_sql)
+            if not result.empty:
+                return {
+                    'stocks_with_tick_data': result.iloc[0]['stocks_with_tick_data'],
+                    'latest_tick_date': result.iloc[0]['latest_tick_date']
+                }
+            else:
+                return {'stocks_with_tick_data': 0, 'latest_tick_date': None}
+
+        except Exception as e:
+            logger.warning(f"获取分笔数据统计失败: {e}")
+            return {'stocks_with_tick_data': 0, 'latest_tick_date': None}
+
     def _export_market_statistics(self, wb: Workbook):
         """导出市场统计数据"""
         try:
@@ -427,7 +474,7 @@ class EnhancedExcelExporter:
 
             # 1. 股票总数统计
             stock_count_sql = """
-            SELECT 
+            SELECT
                 COUNT(*) as total_stocks,
                 SUM(CASE WHEN market = 'sh' THEN 1 ELSE 0 END) as sh_stocks,
                 SUM(CASE WHEN market = 'sz' THEN 1 ELSE 0 END) as sz_stocks
@@ -451,15 +498,39 @@ class EnhancedExcelExporter:
             """
             industry_stats = enhanced_db_manager.query_to_dataframe(industry_sql)
 
-            # 3. 数据统计
-            data_stats_sql = """
-            SELECT 
-                (SELECT COUNT(DISTINCT stock_code) FROM basic_data WHERE period = 'daily') as stocks_with_basic_data,
-                (SELECT COUNT(DISTINCT stock_code) FROM tick_data) as stocks_with_tick_data,
-                (SELECT MAX(trade_date) FROM basic_data WHERE period = 'daily') as latest_basic_date,
-                (SELECT MAX(trade_date) FROM tick_data) as latest_tick_date
-            """
-            data_stats = enhanced_db_manager.query_to_dataframe(data_stats_sql)
+            # 3. 数据统计 - 使用安全查询方式
+            data_stats = pd.DataFrame()
+            stats_data = {}
+
+            # 检查basic_data表
+            if enhanced_db_manager.table_exists('basic_data'):
+                try:
+                    basic_stats_sql = """
+                    SELECT
+                        COUNT(DISTINCT stock_code) as stocks_with_basic_data,
+                        MAX(trade_date) as latest_basic_date
+                    FROM basic_data
+                    WHERE period = 'daily'
+                    """
+                    basic_result = enhanced_db_manager.query_to_dataframe(basic_stats_sql)
+                    if not basic_result.empty:
+                        stats_data['stocks_with_basic_data'] = basic_result.iloc[0]['stocks_with_basic_data']
+                        stats_data['latest_basic_date'] = basic_result.iloc[0]['latest_basic_date']
+                except Exception as e:
+                    logger.warning(f"查询basic_data统计失败: {e}")
+                    stats_data['stocks_with_basic_data'] = 0
+                    stats_data['latest_basic_date'] = None
+            else:
+                stats_data['stocks_with_basic_data'] = 0
+                stats_data['latest_basic_date'] = None
+
+            # 检查tick_data表 - 由于是分表结构，需要查找最新的表
+            tick_stats_data = self._get_tick_data_statistics()
+            stats_data.update(tick_stats_data)
+
+            # 创建DataFrame
+            if stats_data:
+                data_stats = pd.DataFrame([stats_data])
 
             if not data_stats.empty:
                 stats.append(['有基础数据的股票数', data_stats.iloc[0]['stocks_with_basic_data']])
@@ -512,20 +583,48 @@ class EnhancedExcelExporter:
         """导出分笔数据样本"""
         try:
             ws = wb.create_sheet("分笔数据样本")
+            # 获取最新的tick_data表和数据
+            tick_stats = self._get_tick_data_statistics()
+
+            if tick_stats['latest_tick_date'] is None:
+                ws['A1'] = "暂无分笔数据"
+                return
+
+            # 查找最新的表
+            tables_sql = "SHOW TABLES LIKE 'tick_data_%'"
+            tables_result = enhanced_db_manager.query_to_dataframe(tables_sql)
+
+            if tables_result.empty:
+                ws['A1'] = "暂无分笔数据表"
+                return
+
+            # 找到最新的表
+            table_names = []
+            for _, row in tables_result.iterrows():
+                table_name = list(row.values)[0]
+                if 'tick_data_' in table_name:
+                    table_names.append(table_name)
+
+            if not table_names:
+                ws['A1'] = "暂无有效的分笔数据表"
+                return
+
+            table_names.sort(reverse=True)
+            latest_table = table_names[0]
 
             # 获取最新日期的分笔数据样本
-            sql = """
-            SELECT t.stock_code, s.stock_name, t.trade_time, t.price, 
+            sql = f"""
+            SELECT t.stock_code, s.stock_name, t.trade_time, t.price,
                    t.volume, t.amount, t.trade_type
-            FROM tick_data t
+            FROM {latest_table} t
             LEFT JOIN stock_info s ON t.stock_code = s.stock_code
-            WHERE t.trade_date = (SELECT MAX(trade_date) FROM tick_data)
+            WHERE t.trade_date = (
+                SELECT MAX(trade_date) FROM {latest_table}
+            )
             ORDER BY t.trade_time DESC
             LIMIT 10000
             """
-
             df = enhanced_db_manager.query_to_dataframe(sql)
-
             if not df.empty:
                 # 重命名列
                 df = df.rename(columns={
@@ -537,25 +636,20 @@ class EnhancedExcelExporter:
                     'amount': '成交额',
                     'trade_type': '交易类型'
                 })
-
                 # 添加标题
-                ws['A1'] = "分笔数据样本 (最新交易日前10000条)"
+                ws['A1'] = f"分笔数据样本 (来自{latest_table}, 最新交易日前10000条)"
                 ws.merge_cells('A1:G1')
                 ws['A1'].style = self.title_style
-
                 # 添加数据
                 for r in dataframe_to_rows(df, index=False, header=True):
                     ws.append(r)
-
                 # 应用样式
                 self._apply_table_style(ws, len(df) + 1, 7, start_row=2)
-
                 # 自动调整列宽
                 self._auto_fit_columns(ws)
-
                 logger.info(f"分笔数据样本导出完成: {len(df)} 条记录")
             else:
-                ws['A1'] = "无分笔数据"
+                ws['A1'] = "暂无分笔数据"
 
         except Exception as e:
             logger.error(f"导出分笔数据样本失败: {e}")
@@ -582,17 +676,32 @@ class EnhancedExcelExporter:
         try:
             for column in ws.columns:
                 max_length = 0
-                column_letter = column[0].column_letter
+                column_letter = None
 
                 for cell in column:
+                    # 跳过合并单元格
+                    if hasattr(cell, 'coordinate') and cell.coordinate in ws.merged_cells:
+                        continue
+
+                    # 获取列字母
+                    if column_letter is None:
+                        if hasattr(cell, 'column_letter'):
+                            column_letter = cell.column_letter
+                        else:
+                            # 处理MergedCell对象没有column_letter属性的情况
+                            from openpyxl.utils import get_column_letter
+                            column_letter = get_column_letter(cell.column)
+
                     try:
-                        if len(str(cell.value)) > max_length:
-                            max_length = len(str(cell.value))
+                        cell_value = str(cell.value) if cell.value is not None else ""
+                        if len(cell_value) > max_length:
+                            max_length = len(cell_value)
                     except:
                         pass
 
-                adjusted_width = min(max_length + 2, 50)
-                ws.column_dimensions[column_letter].width = adjusted_width
+                if column_letter:
+                    adjusted_width = min(max_length + 2, 50)
+                    ws.column_dimensions[column_letter].width = adjusted_width
 
         except Exception as e:
             logger.error(f"自动调整列宽失败: {e}")
@@ -644,7 +753,7 @@ class EnhancedExcelExporter:
 
             # 2. K线数据sheet
             basic_sql = f"""
-            SELECT * FROM basic_data 
+            SELECT * FROM basic_data
             WHERE stock_code = :stock_code AND period = 'daily'
               AND trade_date >= DATE_SUB(CURDATE(), INTERVAL {days} DAY)
             ORDER BY trade_date DESC
@@ -659,7 +768,7 @@ class EnhancedExcelExporter:
 
             # 3. 技术指标sheet
             indicator_sql = f"""
-            SELECT * FROM indicator_data 
+            SELECT * FROM indicator_data
             WHERE stock_code = :stock_code
               AND trade_date >= DATE_SUB(CURDATE(), INTERVAL {days} DAY)
             ORDER BY trade_date DESC, indicator_name

@@ -42,7 +42,7 @@ def export_stock_list():
 def export_basic_data(stock_code):
     """导出基础数据"""
     try:
-        period = request.args.get('period', 'daily')
+        period = request.args.get('period', 'daily')  # 默认daily
         format = request.args.get('format', 'excel')
         start_date = request.args.get('start_date')
         end_date = request.args.get('end_date')
@@ -58,9 +58,11 @@ def export_basic_data(stock_code):
         if filepath:
             return jsonify({
                 'success': True,
-                'message': f'股票 {stock_code} 基础数据导出成功',
+                'message': f'股票 {stock_code} {period} 基础数据导出成功',
                 'filepath': filepath,
-                'filename': os.path.basename(filepath)
+                'filename': os.path.basename(filepath),
+                'period': period,
+                'date_range': f"{start_date or '默认开始日期'} 至 {end_date or '默认结束日期'}"
             })
         else:
             return jsonify({'error': '导出失败'}), 500
@@ -69,12 +71,27 @@ def export_basic_data(stock_code):
         logger.error(f"导出基础数据API失败: {e}")
         return jsonify({'error': str(e)}), 500
 
+@export_api.route('/basic_data/<string:stock_code>/periods', methods=['GET'])
+def get_available_basic_periods(stock_code):
+    """获取股票可用的基础数据周期"""
+    try:
+        periods = data_exporter.get_available_basic_periods(stock_code)
+        return jsonify({
+            'success': True,
+            'stock_code': stock_code,
+            'available_periods': periods,
+            'default_period': 'daily'
+        })
+    except Exception as e:
+        logger.error(f"获取可用基础数据周期失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 @export_api.route('/tick_data/<string:stock_code>', methods=['GET'])
 def export_tick_data(stock_code):
     """导出分笔数据"""
     try:
-        trade_date = request.args.get('trade_date', datetime.now().strftime('%Y-%m-%d'))
+        trade_date = request.args.get('trade_date')  # 如果不提供，将使用最新日期
         format = request.args.get('format', 'excel')
 
         filepath = data_exporter.export_tick_data(
@@ -84,9 +101,10 @@ def export_tick_data(stock_code):
         )
 
         if filepath:
+            actual_date = trade_date if trade_date else "最新日期"
             return jsonify({
                 'success': True,
-                'message': f'股票 {stock_code} {trade_date} 分笔数据导出成功',
+                'message': f'股票 {stock_code} {actual_date} 分笔数据导出成功',
                 'filepath': filepath,
                 'filename': os.path.basename(filepath)
             })
@@ -95,6 +113,21 @@ def export_tick_data(stock_code):
 
     except Exception as e:
         logger.error(f"导出分笔数据API失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@export_api.route('/tick_data/<string:stock_code>/dates', methods=['GET'])
+def get_available_tick_dates(stock_code):
+    """获取股票可用的分笔数据日期"""
+    try:
+        dates = data_exporter.get_available_tick_dates(stock_code)
+        return jsonify({
+            'success': True,
+            'stock_code': stock_code,
+            'available_dates': dates,
+            'total_count': len(dates)
+        })
+    except Exception as e:
+        logger.error(f"获取可用分笔数据日期失败: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -384,3 +417,65 @@ def get_supported_data_types():
             }
         ]
     })
+
+
+@export_api.route('/latest_data_info', methods=['GET'])
+def get_latest_data_info():
+    """获取最新数据信息"""
+    try:
+        stock_code = request.args.get('stock_code')
+
+        # 获取最新分笔数据日期
+        latest_tick_date = data_exporter._get_latest_tick_date(stock_code)
+
+        # 获取最新基础数据日期
+        latest_basic_date = data_exporter._get_latest_basic_date(stock_code, 'daily')
+
+        return jsonify({
+            'success': True,
+            'stock_code': stock_code,
+            'latest_tick_date': latest_tick_date.strftime('%Y-%m-%d') if latest_tick_date else None,
+            'latest_basic_date': latest_basic_date.strftime('%Y-%m-%d') if latest_basic_date else None,
+            'message': '已获取最新数据信息'
+        })
+    except Exception as e:
+        logger.error(f"获取最新数据信息失败: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@export_api.route('/quick_export/<string:stock_code>', methods=['GET'])
+def quick_export_latest(stock_code):
+    """快速导出股票最新数据"""
+    try:
+        data_type = request.args.get('data_type', 'basic')  # basic 或 tick
+        format = request.args.get('format', 'excel')
+
+        if data_type == 'tick':
+            # 导出最新分笔数据
+            filepath = data_exporter.export_tick_data(
+                stock_code=stock_code,
+                trade_date=None,  # 自动使用最新日期
+                format=format
+            )
+        else:
+            # 导出基础数据（默认daily，最近一年）
+            filepath = data_exporter.export_basic_data(
+                stock_code=stock_code,
+                period='daily',
+                format=format
+            )
+
+        if filepath:
+            return jsonify({
+                'success': True,
+                'message': f'股票 {stock_code} 最新{data_type}数据导出成功',
+                'filepath': filepath,
+                'filename': os.path.basename(filepath),
+                'data_type': data_type
+            })
+        else:
+            return jsonify({'error': '导出失败，可能没有相关数据'}), 500
+
+    except Exception as e:
+        logger.error(f"快速导出失败: {e}")
+        return jsonify({'error': str(e)}), 500

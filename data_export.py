@@ -14,6 +14,7 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 from loguru import logger
 from database import db_manager
+from enhanced_database import enhanced_db_manager
 from config import config
 from stock_info import stock_info
 from basic_data import basic_data
@@ -57,8 +58,24 @@ class DataExporter:
             return None
 
     def export_basic_data(self, stock_code, period='daily', start_date=None, end_date=None, format='excel'):
-        """导出基础数据"""
+        """导出基础数据
+
+        Args:
+            stock_code: 股票代码
+            period: 数据周期，默认'daily'
+            start_date: 开始日期
+            end_date: 结束日期
+            format: 导出格式
+        """
         try:
+            # 如果没有指定结束日期，使用当前日期
+            if end_date is None:
+                end_date = datetime.now().strftime('%Y-%m-%d')
+
+            # 如果没有指定开始日期，默认导出最近一年的数据
+            if start_date is None:
+                start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+
             # 获取基础数据
             basic_df = basic_data.get_basic_data_from_db(stock_code, period, start_date, end_date)
 
@@ -69,9 +86,12 @@ class DataExporter:
             # 获取股票名称
             stock_name = self._get_stock_name(stock_code)
 
-            # 生成文件名
+            # 生成文件名 - 根据周期类型生成不同的文件名
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"{stock_name}_{stock_code}_basic_{period}_{timestamp}"
+            if period == 'daily':
+                filename = f"basic_data_daily_{stock_name}_{stock_code}_{timestamp}"
+            else:
+                filename = f"basic_data_{period}_{stock_name}_{stock_code}_{timestamp}"
 
             return self._export_dataframe(basic_df, filename, format)
 
@@ -79,9 +99,31 @@ class DataExporter:
             logger.error(f"导出基础数据失败: {e}")
             return None
 
-    def export_tick_data(self, stock_code, trade_date, format='excel'):
-        """导出分笔数据"""
+    def export_tick_data(self, stock_code, trade_date=None, format='excel'):
+        """导出分笔数据
+
+        Args:
+            stock_code: 股票代码
+            trade_date: 交易日期，如果为None则导出最新一天的数据
+            format: 导出格式
+        """
         try:
+            # 如果没有指定日期，获取最新的交易日期
+            if trade_date is None:
+                trade_date = self._get_latest_tick_date(stock_code)
+                if not trade_date:
+                    logger.warning(f"股票 {stock_code} 没有分笔数据")
+                    return None
+
+            # 标准化日期格式
+            if isinstance(trade_date, str):
+                if len(trade_date) == 8:  # YYYYMMDD
+                    trade_date = datetime.strptime(trade_date, '%Y%m%d').date()
+                elif len(trade_date) == 10:  # YYYY-MM-DD
+                    trade_date = datetime.strptime(trade_date, '%Y-%m-%d').date()
+            elif isinstance(trade_date, datetime):
+                trade_date = trade_date.date()
+
             # 获取分笔数据
             tick_df = tick_data.get_tick_data_from_db(stock_code, trade_date, trade_date)
 
@@ -93,8 +135,8 @@ class DataExporter:
             stock_name = self._get_stock_name(stock_code)
 
             # 生成文件名
-            date_str = trade_date if isinstance(trade_date, str) else trade_date.strftime('%Y%m%d')
-            filename = f"{stock_name}_{stock_code}_tick_{date_str}"
+            date_str = trade_date.strftime('%Y%m%d')
+            filename = f"tick_data_{date_str}_{stock_name}_{stock_code}"
 
             return self._export_dataframe(tick_df, filename, format)
 
@@ -107,8 +149,8 @@ class DataExporter:
         """导出技术指标数据"""
         try:
             sql = """
-            SELECT stock_code, trade_date, indicator_name, indicator_value 
-            FROM indicator_data 
+            SELECT stock_code, trade_date, indicator_name, indicator_value
+            FROM indicator_data
             WHERE stock_code = :stock_code AND period_type = :period
             """
             params = {'stock_code': stock_code, 'period': period}
@@ -228,7 +270,7 @@ class DataExporter:
                 try:
                     # 获取基础统计信息
                     sql = """
-                    SELECT 
+                    SELECT
                         stock_code,
                         COUNT(*) as total_records,
                         MIN(trade_date) as start_date,
@@ -240,7 +282,7 @@ class DataExporter:
                         SUM(amount) as total_amount,
                         AVG(change_pct) as avg_change_pct,
                         STDDEV(change_pct) as volatility
-                    FROM basic_data 
+                    FROM basic_data
                     WHERE stock_code = :stock_code AND period_type = :period
                     GROUP BY stock_code
                     """
@@ -350,6 +392,95 @@ class DataExporter:
                 return stock_code
         except:
             return stock_code
+
+    def _get_latest_tick_date(self, stock_code=None):
+        """获取最新的分笔数据日期"""
+        try:
+            # 查找所有tick_data表
+            tables_sql = "SHOW TABLES LIKE 'tick_data_%'"
+            tables_result = db_manager.query_to_dataframe(tables_sql)
+
+            if tables_result.empty:
+                logger.warning("没有找到任何分笔数据表")
+                return None
+
+            # 找到最新的表
+            table_names = []
+            for _, row in tables_result.iterrows():
+                table_name = list(row.values)[0]
+                if 'tick_data_' in table_name:
+                    table_names.append(table_name)
+
+            if not table_names:
+                return None
+
+            # 按日期排序，获取最新的表
+            table_names.sort(reverse=True)
+            latest_table = table_names[0]
+
+            # 从最新的表中查询最新日期
+            if stock_code:
+                sql = f"SELECT MAX(trade_date) as latest_date FROM {latest_table} WHERE stock_code = :stock_code"
+                params = {'stock_code': stock_code}
+            else:
+                sql = f"SELECT MAX(trade_date) as latest_date FROM {latest_table}"
+                params = None
+
+            result = db_manager.query_to_dataframe(sql, params)
+            if not result.empty and result.iloc[0]['latest_date'] is not None:
+                latest_date = result.iloc[0]['latest_date']
+                if isinstance(latest_date, str):
+                    return datetime.strptime(latest_date, '%Y-%m-%d').date()
+                return latest_date
+            return None
+        except Exception as e:
+            logger.error(f"获取最新分笔数据日期失败: {e}")
+            return None
+
+    def _get_latest_basic_date(self, stock_code=None, period='daily'):
+        """获取最新的基础数据日期"""
+        try:
+            if stock_code:
+                sql = "SELECT MAX(trade_date) as latest_date FROM basic_data WHERE stock_code = :stock_code AND period = :period"
+                params = {'stock_code': stock_code, 'period': period}
+            else:
+                sql = "SELECT MAX(trade_date) as latest_date FROM basic_data WHERE period = :period"
+                params = {'period': period}
+
+            result = enhanced_db_manager.safe_query_to_dataframe(sql, params, required_tables=['basic_data'])
+            if not result.empty and result.iloc[0]['latest_date'] is not None:
+                latest_date = result.iloc[0]['latest_date']
+                if isinstance(latest_date, str):
+                    return datetime.strptime(latest_date, '%Y-%m-%d').date()
+                return latest_date
+            return None
+        except Exception as e:
+            logger.error(f"获取最新基础数据日期失败: {e}")
+            return None
+
+    def get_available_tick_dates(self, stock_code):
+        """获取股票可用的分笔数据日期列表"""
+        try:
+            sql = "SELECT DISTINCT trade_date FROM tick_data WHERE stock_code = :stock_code ORDER BY trade_date DESC"
+            result = db_manager.safe_query_to_dataframe(sql, {'stock_code': stock_code}, required_tables=['tick_data'])
+            if not result.empty:
+                return result['trade_date'].tolist()
+            return []
+        except Exception as e:
+            logger.error(f"获取可用分笔数据日期失败: {e}")
+            return []
+
+    def get_available_basic_periods(self, stock_code):
+        """获取股票可用的基础数据周期列表"""
+        try:
+            sql = "SELECT DISTINCT period FROM basic_data WHERE stock_code = :stock_code ORDER BY period"
+            result = db_manager.safe_query_to_dataframe(sql, {'stock_code': stock_code}, required_tables=['basic_data'])
+            if not result.empty:
+                return result['period'].tolist()
+            return ['daily']  # 默认返回daily
+        except Exception as e:
+            logger.error(f"获取可用基础数据周期失败: {e}")
+            return ['daily']
 
     def schedule_export(self, export_config):
         """定时导出任务配置"""

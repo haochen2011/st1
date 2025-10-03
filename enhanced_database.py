@@ -351,6 +351,31 @@ class EnhancedDatabaseManager:
             logger.error(f"查询数据失败: {e}")
             return pd.DataFrame()
 
+    def table_exists(self, table_name: str) -> bool:
+        """检查表是否存在"""
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text(f"SHOW TABLES LIKE '{table_name}'"))
+                return result.fetchone() is not None
+        except Exception as e:
+            logger.error(f"检查表是否存在失败: {e}")
+            return False
+
+    def safe_query_to_dataframe(self, sql: str, params: Optional[Dict] = None, required_tables: List[str] = None) -> pd.DataFrame:
+        """安全查询数据，检查表是否存在"""
+        try:
+            # 检查必需的表是否存在
+            if required_tables:
+                for table in required_tables:
+                    if not self.table_exists(table):
+                        logger.warning(f"表 {table} 不存在，跳过查询")
+                        return pd.DataFrame()
+
+            return self.query_to_dataframe(sql, params)
+        except Exception as e:
+            logger.error(f"安全查询数据失败: {e}")
+            return pd.DataFrame()
+
     def upsert_dataframe(self,
                          df: pd.DataFrame,
                          table_name: str,
