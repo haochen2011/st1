@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Union, Any
 from datetime import datetime, date
 import json
 from loguru import logger
-from config import config
+from core.config import config
 
 Base = declarative_base()
 

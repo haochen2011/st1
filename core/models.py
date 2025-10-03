@@ -2,7 +2,7 @@
 数据库模型定义和初始化模块
 """
 
-from database import db_manager
+from data.database import db_manager
 from loguru import logger
 
 

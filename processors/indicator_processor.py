@@ -10,8 +10,8 @@ import numpy as np
 import talib
 from datetime import datetime
 from loguru import logger
-from database import db_manager
-from config import config
+from data.database import db_manager
+from core.config import config
 
 
 class IndicatorProcessor:

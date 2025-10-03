@@ -9,10 +9,10 @@ import numpy as np
 from datetime import datetime, date
 from loguru import logger
 try:
-    from enhanced_database import enhanced_db_manager as db_manager
+    from ..data.enhanced_database import enhanced_db_manager as db_manager
 except ImportError:
-    from database import db_manager
-from config import config
+    from ..data.database import db_manager
+from ..core.config import config
 
 
 class StockInfo:

@@ -120,7 +120,7 @@ def initialize_database():
 
     try:
         # 导入数据库模块
-        from database import db_manager
+        from data.database import db_manager
 
         # 数据库表会在DatabaseManager初始化时自动创建
         print("✓ 数据库表初始化成功")

@@ -9,8 +9,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from loguru import logger
-from tick_data import tick_data
-from config import config
+from data.tick_data import tick_data
+from core.config import config
 
 
 class TickProcessor:

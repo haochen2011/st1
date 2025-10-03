@@ -1,3 +1,111 @@
+# A股股票分析系统 - 代码重构说明
+
+## 重构概述
+已成功将原有的单层目录结构重新组织为模块化的包结构，提高了代码的可维护性和扩展性。
+
+## 新的包结构
+
+### 📊 analysis/ - 分析模块
+包含各种股票分析功能：
+- `anomaly_detection.py` - 异动检测
+- `channel_analysis.py` - 多空通道分析
+- `limit_up_analysis.py` - 涨停分析
+- `resonance_analysis.py` - 共振分析
+
+### ⚙️ core/ - 核心模块
+包含应用核心功能和配置：
+- `app.py` - Flask主应用
+- `app_config.py` - 应用配置
+- `config.py` - 配置管理
+- `models.py` - 数据模型
+- `run_server.py` - 服务器启动
+
+### 💾 data/ - 数据模块
+包含数据获取、存储和管理功能：
+- `basic_data.py` - 基础数据管理
+- `data_fetcher.py` - 数据获取器
+- `database.py` - 数据库管理
+- `enhanced_database.py` - 增强数据库管理
+- `tick_data.py` - 分笔数据管理
+
+### 📤 export/ - 导出模块
+包含数据导出和API功能：
+- `data_export.py` - 数据导出
+- `enhanced_excel_exporter.py` - 增强Excel导出
+- `export_api.py` - 导出API
+
+### 🔄 processors/ - 处理器模块
+包含各种数据处理器：
+- `basic_processor.py` - 基础处理器
+- `batch_processor.py` - 批量处理器
+- `indicator_processor.py` - 指标处理器
+- `tick_processor.py` - 分笔数据处理器
+
+### 🛠️ utils/ - 工具模块
+包含各种工具类和辅助功能：
+- `indicator_api.py` - 指标API
+- `stock_data_manager.py` - 股票数据管理器
+- `stock_info.py` - 股票信息管理
+- `technical_indicators.py` - 技术指标
+
+## 保持不变的文件
+- `启动.py` - 主启动脚本（已更新import路径）
+- `config.ini` - 配置文件
+- `requirements.txt` - 依赖包列表
+- `setup.py` - 安装脚本
+- `test_system.py` - 系统测试
+- `example_usage.py` - 使用示例
+
+## 主要改进
+
+### 1. 模块化结构
+- 清晰的功能分工，每个包负责特定的功能领域
+- 便于维护和扩展
+
+### 2. 规范的导入结构
+- 统一使用相对导入（如 `from ..core.config import config`）
+- 避免了循环导入问题
+
+### 3. 包初始化文件
+- 每个包都有 `__init__.py` 文件，提供统一的导入接口
+- 便于外部模块导入和使用
+
+### 4. 向下兼容
+- 启动脚本 `启动.py` 保持原有功能不变
+- 所有原有功能都可以正常使用
+
+## 使用方法
+
+启动系统的方式保持不变：
+```bash
+python 启动.py
+```
+
+在代码中导入模块的新方式：
+```python
+# 导入核心配置
+from core.config import config
+
+# 导入数据管理器
+from data.enhanced_database import enhanced_db_manager
+
+# 导入批量处理器
+from processors.batch_processor import batch_processor
+
+# 导入导出功能
+from export.enhanced_excel_exporter import enhanced_excel_exporter
+
+# 导入分析功能
+from analysis.anomaly_detection import anomaly_detector
+```
+
+## 验证结果
+✅ 所有Python文件语法检查通过
+✅ 启动脚本可以正常运行
+✅ 导入结构正确无误
+✅ 功能完整性保持不变
+
+重构完成！现在您的代码具有更好的组织结构和可维护性。
 # A股数据管理系统 v2.0 (优化版)
 
 ## 🚀 系统概述

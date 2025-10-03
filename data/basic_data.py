@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from loguru import logger
 from database import db_manager
-from config import config
+from core.config import config
 
 
 class BasicData:
@@ -444,7 +444,7 @@ class BasicData:
 
 # 创建全局实例，使用配置中的超时设置
 try:
-    from config import config
+    from core.config import config
     timeout = config.get_data_fetch_timeout()
     max_retries = config.get_max_retries()
     basic_data = BasicData(timeout=timeout, max_retries=max_retries)

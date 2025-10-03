@@ -131,7 +131,7 @@ def one_click_update():
     choice = input("请选择 (1-3, 默认2): ").strip() or "2"
 
     try:
-        from batch_processor import batch_processor
+        from processors.batch_processor import batch_processor
 
         if choice == "1":
             print("开始基础更新...")
@@ -183,7 +183,7 @@ def update_stock_info():
     print("\n📈 更新股票基本信息...")
 
     try:
-        from batch_processor import batch_processor
+        from processors.batch_processor import batch_processor
 
         result = batch_processor.batch_update_stock_info()
         print(f"✅ 更新完成: 成功 {result['success']}, 失败 {result['failed']}")
@@ -199,7 +199,7 @@ def download_tick_data():
     date_input = input("请输入日期 (YYYYMMDD, 回车=昨天): ").strip()
 
     try:
-        from batch_processor import batch_processor
+        from processors.batch_processor import batch_processor
         from datetime import datetime, timedelta
 
         if not date_input:
@@ -220,7 +220,7 @@ def export_excel():
     print("\n📊 导出数据到Excel...")
 
     try:
-        from enhanced_excel_exporter import enhanced_excel_exporter
+        from export.enhanced_excel_exporter import enhanced_excel_exporter
 
         print("正在生成Excel文件...")
         filename = enhanced_excel_exporter.export_all_stock_data(
@@ -254,7 +254,7 @@ def query_stock():
         return
 
     try:
-        from enhanced_database import enhanced_db_manager
+        from data.enhanced_database import enhanced_db_manager
 
         # 查询股票基本信息
         info_sql = "SELECT * FROM stock_info WHERE stock_code = :stock_code"
@@ -272,8 +272,8 @@ def query_stock():
 
         # 查询最新价格
         price_sql = """
-        SELECT trade_date, close_price, volume, amount 
-        FROM basic_data 
+        SELECT trade_date, close_price, volume, amount
+        FROM basic_data
         WHERE stock_code = :stock_code AND period = 'daily'
         ORDER BY trade_date DESC LIMIT 1
         """
@@ -346,7 +346,7 @@ def main():
                 query_stock()
             elif choice == '6':
                 print("\n🚀 启动完整管理界面...")
-                from stock_data_manager import StockDataManager
+                from utils.stock_data_manager import StockDataManager
                 manager = StockDataManager()
                 manager.run_interactive()
                 break

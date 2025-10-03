@@ -18,7 +18,7 @@ def test_timeout_mechanism():
     print("=" * 50)
 
     try:
-        from data_fetcher import data_fetcher
+        from data.data_fetcher import data_fetcher
 
         print(f"设置超时时间: {data_fetcher.timeout}秒")
         print("正在测试数据获取...")

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from loguru import logger
 from database import db_manager
-from config import config
+from core.config import config
 
 
 class TickData:
@@ -225,7 +225,7 @@ class TickData:
                 trade_date = trade_date.date()
             # 获取股票名称
             if stock_name is None:
-                from stock_info import stock_info
+                from utils.stock_info import stock_info
                 info = stock_info.get_stock_info_from_db(stock_code)
                 if not info.empty:
                     stock_name = info.iloc[0]['stock_name']
@@ -418,7 +418,7 @@ class TickData:
 
 # 创建全局实例，使用配置中的超时设置
 try:
-    from config import config
+    from core.config import config
     timeout = config.get_data_fetch_timeout()
     max_retries = config.get_max_retries()
     tick_data = TickData(timeout=timeout, max_retries=max_retries)

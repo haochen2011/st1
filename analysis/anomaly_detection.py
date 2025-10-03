@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from loguru import logger
-from data_fetcher import data_fetcher
+from data.data_fetcher import data_fetcher
 
 
 class AnomalyDetector:

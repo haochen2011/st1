@@ -16,8 +16,8 @@ from loguru import logger
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
-from indicator_api import indicator_api
-from export_api import export_api
+from utils.indicator_api import indicator_api
+from export.export_api import export_api
 
 def create_app():
     """创建Flask应用"""

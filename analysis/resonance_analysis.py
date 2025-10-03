@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from loguru import logger
-from basic_data import basic_data
+from data.basic_data import basic_data
 
 
 class ResonanceAnalyzer:

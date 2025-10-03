@@ -12,11 +12,11 @@ from datetime import datetime, timedelta
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from stock_info import stock_info
-from tick_data import tick_data
-from basic_data import basic_data
-from indicator_processor import indicator_processor
-from tick_processor import tick_processor
+from utils.stock_info import stock_info
+from data.tick_data import tick_data
+from data.basic_data import basic_data
+from processors.indicator_processor import indicator_processor
+from processors.tick_processor import tick_processor
 
 
 def example_stock_info():

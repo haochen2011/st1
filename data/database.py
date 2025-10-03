@@ -11,7 +11,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from contextlib import contextmanager
 from loguru import logger
-from config import config
+from core.config import config
 
 
 class DatabaseManager:

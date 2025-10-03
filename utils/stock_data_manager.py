@@ -23,11 +23,11 @@ from loguru import logger
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # 导入自定义模块
-from batch_processor import batch_processor
-from enhanced_database import enhanced_db_manager
-from enhanced_excel_exporter import enhanced_excel_exporter
-from config import config
-from stock_info import stock_info
+from ..processors.batch_processor import batch_processor
+from ..data.enhanced_database import enhanced_db_manager
+from ..export.enhanced_excel_exporter import enhanced_excel_exporter
+from ..core.config import config
+from .stock_info import stock_info
 from tick_data import tick_data
 from basic_data import basic_data
 

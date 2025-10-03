@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from loguru import logger
-from config import config
+from core.config import config
 
 
 class BasicProcessor:
