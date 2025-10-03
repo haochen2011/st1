@@ -15,7 +15,7 @@ import queue
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
 from loguru import logger
-from database import db_manager
+from .database import db_manager
 from core.config import config
 
 

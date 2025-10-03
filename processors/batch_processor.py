@@ -17,7 +17,9 @@ from tqdm import tqdm
 import json
 from typing import List, Dict, Optional, Union
 from data.database import db_manager
-from utils.stock_info import stock_info
+import utils.stock_info as stock_info_module
+# 使用时
+stock_info = stock_info_module.stock_info
 from data.tick_data import tick_data
 from data.basic_data import basic_data
 import schedule

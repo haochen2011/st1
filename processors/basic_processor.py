@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from loguru import logger
 from core.config import config
 
-
 class BasicProcessor:
     """基础数据处理器类"""
 
