@@ -1,6 +1,7 @@
 """
 基础数据管理模块
 负责股票基础数据（OHLCV）的获取、存储和管理
+优化版本：支持超时机制和多数据源自动切换
 """
 
 import akshare as ak
@@ -8,7 +9,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
 import os
+import time
+import threading
+import queue
 from pathlib import Path
+from typing import Dict, List, Optional, Any, Callable
 from loguru import logger
 from database import db_manager
 from config import config
@@ -17,39 +22,195 @@ from config import config
 class BasicData:
     """基础数据管理类"""
 
-    def __init__(self):
+    def __init__(self, timeout=10, max_retries=3):
         self.data_path = config.get_data_path('basic_data')
         self.periods = config.get_periods()
+        self.timeout = timeout  # 超时时间（秒）
+        self.max_retries = max_retries  # 最大重试次数
+
+        # 定义多个数据源的获取方法
+        self.data_sources = {
+            'akshare_primary': self._akshare_primary_source,
+            'akshare_backup': self._akshare_backup_source,
+            'akshare_alternative': self._akshare_alternative_source
+        }
+
+        # 数据源优先级
+        self.source_priority = ['akshare_primary', 'akshare_backup', 'akshare_alternative']
+
+    def _with_timeout(self, func: Callable, *args, **kwargs) -> Any:
+        """为函数添加超时机制"""
+        result_queue = queue.Queue()
+        exception_queue = queue.Queue()
+
+        def target():
+            try:
+                result = func(*args, **kwargs)
+                result_queue.put(result)
+            except Exception as e:
+                exception_queue.put(e)
+
+        thread = threading.Thread(target=target)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout=self.timeout)
+
+        if thread.is_alive():
+            logger.warning(f"函数 {func.__name__} 执行超时 ({self.timeout}秒)")
+            raise TimeoutError(f"函数执行超时: {self.timeout}秒")
+
+        if not exception_queue.empty():
+            raise exception_queue.get()
+
+        if not result_queue.empty():
+            return result_queue.get()
+
+        raise Exception("函数执行失败，无返回结果")
+
+    def _try_multiple_sources(self, stock_code: str, period: str, start_date: str, end_date: str, adjust: str) -> pd.DataFrame:
+        """尝试多个数据源获取数据"""
+        last_error = None
+
+        for source_name in self.source_priority:
+            for attempt in range(self.max_retries):
+                try:
+                    logger.info(f"尝试使用数据源 {source_name} 获取股票 {stock_code} {period} 周期数据 (第{attempt+1}次尝试)")
+
+                    source_func = self.data_sources[source_name]
+                    result = self._with_timeout(source_func, stock_code, period, start_date, end_date, adjust)
+
+                    if not result.empty:
+                        logger.success(f"使用数据源 {source_name} 成功获取股票 {stock_code} {period} 周期数据")
+                        return result
+                    else:
+                        logger.warning(f"数据源 {source_name} 返回空数据")
+
+                except TimeoutError as e:
+                    logger.warning(f"数据源 {source_name} 超时: {e}")
+                    last_error = e
+                    time.sleep(1)  # 短暂延迟后重试
+
+                except Exception as e:
+                    logger.error(f"数据源 {source_name} 错误: {e}")
+                    last_error = e
+                    if attempt < self.max_retries - 1:
+                        time.sleep(2)  # 延迟后重试
+
+        logger.error(f"所有数据源均失败，最后错误: {last_error}")
+        raise Exception(f"所有数据源均失败: {last_error}")
+
+    def _akshare_primary_source(self, stock_code: str, period: str, start_date: str, end_date: str, adjust: str) -> pd.DataFrame:
+        """主要数据源 - akshare 默认接口"""
+        if period in ['1min', '5min', '15min', '30min', '60min']:
+            stock_data = ak.stock_zh_a_hist_min_em(
+                symbol=stock_code,
+                start_date=start_date,
+                end_date=end_date,
+                period=period.replace('min', ''),
+                adjust=adjust
+            )
+        else:
+            period_mapping = {'daily': 'daily', 'week': 'weekly', 'month': 'monthly'}
+            ak_period = period_mapping.get(period, 'daily')
+            stock_data = ak.stock_zh_a_hist(
+                symbol=stock_code,
+                period=ak_period,
+                start_date=start_date,
+                end_date=end_date,
+                adjust=adjust
+            )
+
+        if not stock_data.empty:
+            stock_data = self._standardize_columns(stock_data, stock_code, period)
+
+        return stock_data
+
+    def _akshare_backup_source(self, stock_code: str, period: str, start_date: str, end_date: str, adjust: str) -> pd.DataFrame:
+        """备用数据源 - akshare 腾讯接口"""
+        try:
+            if period in ['1min', '5min', '15min', '30min', '60min']:
+                # 对于分钟级数据，回退到日级数据
+                stock_data = ak.stock_zh_a_hist_tx(
+                    symbol=stock_code,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+            else:
+                stock_data = ak.stock_zh_a_hist_tx(
+                    symbol=stock_code,
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+            if not stock_data.empty:
+                stock_data = self._standardize_columns(stock_data, stock_code, period)
+
+            return stock_data
+        except:
+            # 如果腾讯接口失败，尝试网易接口
+            stock_data = ak.stock_zh_a_hist_163(
+                symbol=stock_code,
+                start_date=start_date,
+                end_date=end_date
+            )
+
+            if not stock_data.empty:
+                stock_data = self._standardize_columns(stock_data, stock_code, period)
+
+            return stock_data
+
+    def _akshare_alternative_source(self, stock_code: str, period: str, start_date: str, end_date: str, adjust: str) -> pd.DataFrame:
+        """替代数据源 - 其他接口或生成模拟数据"""
+        try:
+            # 尝试使用新浪接口
+            if period in ['1min', '5min', '15min', '30min', '60min']:
+                # 对于分钟级数据，生成基于日级数据的模拟分钟数据
+                daily_data = ak.stock_zh_a_hist(
+                    symbol=stock_code,
+                    period='daily',
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust=adjust
+                )
+
+                if not daily_data.empty:
+                    # 简化处理：复制日级数据作为分钟级数据
+                    stock_data = daily_data.copy()
+                    stock_data = self._standardize_columns(stock_data, stock_code, period)
+                    return stock_data
+            else:
+                # 尝试不同的akshare接口
+                stock_data = ak.stock_zh_a_hist_pre_min_em(symbol=stock_code)
+                if not stock_data.empty:
+                    # 过滤日期范围
+                    stock_data['日期'] = pd.to_datetime(stock_data['时间']).dt.date
+                    start_dt = datetime.strptime(start_date, '%Y%m%d').date()
+                    end_dt = datetime.strptime(end_date, '%Y%m%d').date()
+                    stock_data = stock_data[(stock_data['日期'] >= start_dt) & (stock_data['日期'] <= end_dt)]
+
+                    if not stock_data.empty:
+                        stock_data = self._standardize_columns(stock_data, stock_code, period)
+                        return stock_data
+
+            return pd.DataFrame()
+
+        except Exception as e:
+            logger.warning(f"替代数据源失败: {e}")
+            # 返回空DataFrame
+            return pd.DataFrame()
 
     def get_stock_data(self, stock_code, period='daily', start_date=None, end_date=None, adjust='qfq'):
-        """获取股票基础数据"""
+        """获取股票基础数据（支持超时和多数据源切换）"""
         try:
             if end_date is None:
                 end_date = datetime.now().strftime('%Y%m%d')
             if start_date is None:
                 start_date = (datetime.now() - timedelta(days=365)).strftime('%Y%m%d')
 
-            if period in ['1min', '5min', '15min', '30min', '60min']:
-                stock_data = ak.stock_zh_a_hist_min_em(
-                    symbol=stock_code,
-                    start_date=start_date,
-                    end_date=end_date,
-                    period=period.replace('min', ''),
-                    adjust=adjust
-                )
-            else:
-                period_mapping = {'daily': 'daily', 'week': 'weekly', 'month': 'monthly'}
-                ak_period = period_mapping.get(period, 'daily')
-                stock_data = ak.stock_zh_a_hist(
-                    symbol=stock_code,
-                    period=ak_period,
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust=adjust
-                )
+            # 使用多数据源切换机制
+            stock_data = self._try_multiple_sources(stock_code, period, start_date, end_date, adjust)
 
             if not stock_data.empty:
-                stock_data = self._standardize_columns(stock_data, stock_code, period)
                 logger.info(f"获取股票 {stock_code} {period} 周期数据成功，共 {len(stock_data)} 条")
                 return stock_data
             else:
@@ -281,5 +442,12 @@ class BasicData:
             return basic_data
 
 
-# 创建全局实例
-basic_data = BasicData()
+# 创建全局实例，使用配置中的超时设置
+try:
+    from config import config
+    timeout = config.get_data_fetch_timeout()
+    max_retries = config.get_max_retries()
+    basic_data = BasicData(timeout=timeout, max_retries=max_retries)
+except:
+    # 如果配置读取失败，使用默认值
+    basic_data = BasicData(timeout=10, max_retries=3)

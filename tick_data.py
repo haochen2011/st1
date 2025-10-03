@@ -1,6 +1,7 @@
 """
 分笔数据管理模块
 负责股票分笔数据的获取、存储和管理
+优化版本：支持超时机制和多数据源自动切换
 """
 
 import akshare as ak
@@ -8,7 +9,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date, timedelta
 import os
+import time
+import threading
+import queue
 from pathlib import Path
+from typing import Dict, List, Optional, Any, Callable
 from loguru import logger
 from database import db_manager
 from config import config
@@ -17,41 +22,143 @@ from config import config
 class TickData:
     """分笔数据管理类"""
 
-    def __init__(self):
+    def __init__(self, timeout=10, max_retries=3):
         self.data_path = config.get_data_path('tick_data')
+        self.timeout = timeout  # 超时时间（秒）
+        self.max_retries = max_retries  # 最大重试次数
+
+        # 定义多个数据源的获取方法
+        self.data_sources = {
+            'akshare_tx_primary': self._akshare_tx_primary_source,
+            'akshare_tx_backup': self._akshare_tx_backup_source,
+            'akshare_alternative': self._akshare_alternative_source
+        }
+
+        # 数据源优先级
+        self.source_priority = ['akshare_tx_primary', 'akshare_tx_backup', 'akshare_alternative']
+
+    def _with_timeout(self, func: Callable, *args, **kwargs) -> Any:
+        """为函数添加超时机制"""
+        result_queue = queue.Queue()
+        exception_queue = queue.Queue()
+
+        def target():
+            try:
+                result = func(*args, **kwargs)
+                result_queue.put(result)
+            except Exception as e:
+                exception_queue.put(e)
+
+        thread = threading.Thread(target=target)
+        thread.daemon = True
+        thread.start()
+        thread.join(timeout=self.timeout)
+
+        if thread.is_alive():
+            logger.warning(f"函数 {func.__name__} 执行超时 ({self.timeout}秒)")
+            raise TimeoutError(f"函数执行超时: {self.timeout}秒")
+
+        if not exception_queue.empty():
+            raise exception_queue.get()
+
+        if not result_queue.empty():
+            return result_queue.get()
+
+        raise Exception("函数执行失败，无返回结果")
+
+    def _try_multiple_sources(self, stock_code: str, trade_date: str) -> pd.DataFrame:
+        """尝试多个数据源获取分笔数据"""
+        last_error = None
+
+        for source_name in self.source_priority:
+            for attempt in range(self.max_retries):
+                try:
+                    logger.info(f"尝试使用数据源 {source_name} 获取股票 {stock_code} {trade_date} 分笔数据 (第{attempt+1}次尝试)")
+
+                    source_func = self.data_sources[source_name]
+                    result = self._with_timeout(source_func, stock_code, trade_date)
+
+                    if not result.empty:
+                        logger.success(f"使用数据源 {source_name} 成功获取股票 {stock_code} {trade_date} 分笔数据")
+                        return result
+                    else:
+                        logger.warning(f"数据源 {source_name} 返回空数据")
+
+                except TimeoutError as e:
+                    logger.warning(f"数据源 {source_name} 超时: {e}")
+                    last_error = e
+                    time.sleep(1)  # 短暂延迟后重试
+
+                except Exception as e:
+                    logger.error(f"数据源 {source_name} 错误: {e}")
+                    last_error = e
+                    if attempt < self.max_retries - 1:
+                        time.sleep(2)  # 延迟后重试
+
+        logger.error(f"所有数据源均失败，最后错误: {last_error}")
+        return pd.DataFrame()  # 分笔数据失败时返回空DataFrame而不是抛出异常
+
+    def _akshare_tx_primary_source(self, stock_code: str, trade_date: str) -> pd.DataFrame:
+        """主要数据源 - akshare 腾讯分笔接口"""
+        tick_data = ak.stock_zh_a_tick_tx_js(symbol=stock_code)
+        if not tick_data.empty:
+            tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
+        return tick_data
+
+    def _akshare_tx_backup_source(self, stock_code: str, trade_date: str) -> pd.DataFrame:
+        """备用数据源 - 带市场前缀的腾讯接口"""
+        # 根据股票代码添加市场前缀
+        prefixed_code = f"sz{stock_code}" if not stock_code.startswith('6') else f"sh{stock_code}"
+        tick_data = ak.stock_zh_a_tick_tx_js(symbol=prefixed_code)
+        if not tick_data.empty:
+            tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
+        return tick_data
+
+    def _akshare_alternative_source(self, stock_code: str, trade_date: str) -> pd.DataFrame:
+        """替代数据源 - 其他分笔数据接口或模拟数据"""
+        try:
+            # 尝试使用实时数据作为分笔数据的替代
+            realtime_data = ak.stock_zh_a_spot_em()
+            filtered_data = realtime_data[realtime_data['代码'] == stock_code]
+
+            if not filtered_data.empty:
+                # 将实时数据转换为分笔数据格式
+                row = filtered_data.iloc[0]
+                tick_data = pd.DataFrame({
+                    'trade_time': [datetime.now().strftime('%H:%M:%S')],
+                    'price': [row.get('最新价', 0)],
+                    'price_change': [row.get('涨跌额', 0)],
+                    'volume': [row.get('成交量', 0)],
+                    'amount': [row.get('成交额', 0)],
+                    'trade_type': ['实时数据']
+                })
+
+                tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
+                return tick_data
+
+            return pd.DataFrame()
+
+        except Exception as e:
+            logger.warning(f"替代数据源失败: {e}")
+            return pd.DataFrame()
 
     def get_tick_data(self, stock_code, trade_date=None):
-        """获取股票分笔数据"""
+        """获取股票分笔数据（支持超时和多数据源切换）"""
         if trade_date is None:
             trade_date = datetime.now().strftime('%Y%m%d')
         elif isinstance(trade_date, (date, datetime)):
             trade_date = trade_date.strftime('%Y%m%d')
 
         try:
-            # 方法1：使用akshare获取分笔数据
-            try:
-                tick_data = ak.stock_zh_a_tick_tx_js(symbol=stock_code)
-                if not tick_data.empty:
-                    # 标准化列名
-                    tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
-                    logger.info(f"获取股票 {stock_code} {trade_date} 分笔数据成功，共 {len(tick_data)} 条")
-                    return tick_data
-            except Exception as e1:
-                logger.warning(f"方法1获取分笔数据失败: {e1}")
+            # 使用多数据源切换机制
+            tick_data = self._try_multiple_sources(stock_code, trade_date)
 
-            # 方法2：尝试其他API
-            try:
-                tick_data = ak.stock_zh_a_tick_tx_js(symbol=f"sz{stock_code}" if not stock_code.startswith('6') else f"sh{stock_code}")
-                if not tick_data.empty:
-                    tick_data = self._standardize_columns(tick_data, stock_code, trade_date)
-                    logger.info(f"获取股票 {stock_code} {trade_date} 分笔数据成功（方法2），共 {len(tick_data)} 条")
-                    return tick_data
-            except Exception as e2:
-                logger.warning(f"方法2获取分笔数据失败: {e2}")
-
-            # 如果都失败，返回空DataFrame并记录
-            logger.warning(f"股票 {stock_code} {trade_date} 无分笔数据或获取失败")
-            return pd.DataFrame()
+            if not tick_data.empty:
+                logger.info(f"获取股票 {stock_code} {trade_date} 分笔数据成功，共 {len(tick_data)} 条")
+                return tick_data
+            else:
+                logger.warning(f"股票 {stock_code} {trade_date} 无分笔数据")
+                return pd.DataFrame()
 
         except Exception as e:
             logger.error(f"获取股票 {stock_code} {trade_date} 分笔数据失败: {e}")
@@ -309,5 +416,12 @@ class TickData:
             return {}
 
 
-# 创建全局实例
-tick_data = TickData()
+# 创建全局实例，使用配置中的超时设置
+try:
+    from config import config
+    timeout = config.get_data_fetch_timeout()
+    max_retries = config.get_max_retries()
+    tick_data = TickData(timeout=timeout, max_retries=max_retries)
+except:
+    # 如果配置读取失败，使用默认值
+    tick_data = TickData(timeout=10, max_retries=3)

@@ -16,7 +16,6 @@ from loguru import logger
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from config import config
-from all_api import main_api
 from indicator_api import indicator_api
 from export_api import export_api
 
@@ -28,7 +27,6 @@ def create_app():
     CORS(app)
 
     # 注册蓝图
-    app.register_blueprint(main_api)
     app.register_blueprint(indicator_api)
     app.register_blueprint(export_api)
     # 配置日志

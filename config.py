@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 配置管理模块
 负责读取和管理系统配置
@@ -60,6 +58,20 @@ class Config:
             'periods': '1min,5min,10min,15min,30min,1hour,daily,week,month,quarter,half-year,year'
         }
 
+        self.config['data_fetch'] = {
+            'timeout': '10',
+            'max_retries': '3',
+            'retry_delay': '2',
+            'enable_backup_sources': 'True'
+        }
+
+        self.config['thresholds'] = {
+            'price_change_threshold': '5.0',
+            'volume_ratio_threshold': '2.0',
+            'turnover_threshold': '15.0',
+            'update_interval_minutes': '5'
+        }
+
         # 保存配置文件
         with open(self.config_file, 'w', encoding='utf-8') as f:
             self.config.write(f)
@@ -92,6 +104,45 @@ class Config:
         """获取支持的市场代码列表"""
         codes_str = self.get('stock', 'market_codes', 'sh,sz')
         return [c.strip() for c in codes_str.split(',')]
+
+    def get_data_fetch_timeout(self):
+        """获取数据获取超时时间"""
+        return self.getint('data_fetch', 'timeout', 10)
+
+    def get_max_retries(self):
+        """获取最大重试次数"""
+        return self.getint('data_fetch', 'max_retries', 3)
+
+    def get_retry_delay(self):
+        """获取重试延迟时间"""
+        return self.getint('data_fetch', 'retry_delay', 2)
+
+    def is_backup_sources_enabled(self):
+        """是否启用备用数据源"""
+        return self.getboolean('data_fetch', 'enable_backup_sources', True)
+
+    def get_price_change_threshold(self):
+        """获取价格变动阈值"""
+        return self.getfloat('thresholds', 'price_change_threshold', 5.0)
+
+    def get_volume_ratio_threshold(self):
+        """获取成交量比率阈值"""
+        return self.getfloat('thresholds', 'volume_ratio_threshold', 2.0)
+
+    def get_turnover_threshold(self):
+        """获取换手率阈值"""
+        return self.getfloat('thresholds', 'turnover_threshold', 15.0)
+
+    def get_update_interval_minutes(self):
+        """获取更新间隔（分钟）"""
+        return self.getint('thresholds', 'update_interval_minutes', 5)
+
+    def getfloat(self, section, key, fallback=None):
+        """获取浮点数配置值"""
+        try:
+            return self.config.getfloat(section, key)
+        except (ValueError, KeyError):
+            return fallback
 
 
 # 全局配置实例

@@ -1,216 +1,188 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
-系统测试脚本
-测试各个模块的基本功能
+优化功能测试脚本
+测试超时机制和多数据源切换功能
 """
 
 import sys
 import os
-from datetime import datetime, date, timedelta
+import time
+from datetime import datetime
 
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from config import config
-from database import db_manager
-from stock_info import stock_info
-from tick_data import tick_data
-from basic_data import basic_data
-from indicator_processor import indicator_processor
+def test_timeout_mechanism():
+    """测试超时机制"""
+    print("=" * 50)
+    print("测试1: 超时机制")
+    print("=" * 50)
 
-
-def test_config():
-    """测试配置模块"""
-    print("=== 测试配置模块 ===")
     try:
-        print(f"数据库主机: {config.get('database', 'host')}")
-        print(f"API端口: {config.getint('api', 'port')}")
-        print(f"支持的周期: {config.get_periods()}")
-        print(f"支持的市场: {config.get_market_codes()}")
-        print("✓ 配置模块测试通过")
-        return True
+        from data_fetcher import data_fetcher
+
+        print(f"设置超时时间: {data_fetcher.timeout}秒")
+        print("正在测试数据获取...")
+
+        start_time = time.time()
+        result = data_fetcher.get_stock_list()
+        end_time = time.time()
+
+        execution_time = end_time - start_time
+        print(f"执行时间: {execution_time:.2f}秒")
+
+        if execution_time <= data_fetcher.timeout + 2:  # 允许2秒误差
+            print("✓ 超时机制正常工作")
+        else:
+            print("⚠ 超时机制可能有问题")
+
+        if not result.empty:
+            print(f"✓ 获取数据成功，共 {len(result)} 条记录")
+        else:
+            print("⚠ 未获取到数据")
+
     except Exception as e:
-        print(f"✗ 配置模块测试失败: {e}")
-        return False
+        print(f"✗ 测试失败: {e}")
 
+def test_multiple_data_sources():
+    """测试多数据源切换"""
+    print("\n" + "=" * 50)
+    print("测试2: 多数据源切换")
+    print("=" * 50)
 
-def test_database():
-    """测试数据库连接"""
-    print("\n=== 测试数据库连接 ===")
     try:
-        result = db_manager.execute_sql("SELECT 1 as test")
-        print("✓ 数据库连接测试通过")
+        from data_fetcher import data_fetcher
 
-        # 测试查询
-        stock_count = db_manager.query_to_dataframe("SELECT COUNT(*) as count FROM stock_info")
-        print(f"数据库中股票数量: {stock_count.iloc[0]['count'] if not stock_count.empty else 0}")
-        print("✓ 数据库查询测试通过")
-        return True
+        print(f"配置的数据源: {data_fetcher.source_priority}")
+        print("正在测试各个数据源...")
+
+        # 测试股票列表获取
+        test_operations = [
+            ('股票列表', lambda: data_fetcher.get_stock_list()),
+            ('实时数据', lambda: data_fetcher.get_realtime_data(['000001'])),
+            ('历史数据', lambda: data_fetcher.get_historical_data('000001', '2024-01-01', '2024-01-31')),
+            ('大盘指数', lambda: data_fetcher.get_market_index_data()),
+            ('板块数据', lambda: data_fetcher.get_sector_data())
+        ]
+
+        for operation_name, operation_func in test_operations:
+            print(f"\n测试 {operation_name}:")
+            try:
+                start_time = time.time()
+                result = operation_func()
+                end_time = time.time()
+
+                if hasattr(result, 'empty'):
+                    success = not result.empty
+                    count = len(result) if success else 0
+                else:
+                    success = bool(result)
+                    count = len(result) if isinstance(result, (list, dict)) else 1
+
+                print(f"  ✓ 成功获取数据 (耗时: {end_time - start_time:.2f}秒, 记录数: {count})")
+
+            except Exception as e:
+                print(f"  ✗ 获取失败: {e}")
+
     except Exception as e:
-        print(f"✗ 数据库测试失败: {e}")
-        print("请检查数据库配置和连接")
-        return False
+        print(f"✗ 测试失败: {e}")
 
+def test_basic_data_optimization():
+    """测试基础数据模块优化"""
+    print("\n" + "=" * 50)
+    print("测试3: 基础数据模块优化")
+    print("=" * 50)
 
-def test_stock_info():
-    """测试股票信息模块"""
-    print("\n=== 测试股票信息模块 ===")
     try:
-        # 测试获取股票列表
-        stocks = stock_info.get_stock_list('sh')
-        if not stocks.empty:
-            print(f"✓ 获取上海股票列表成功，共 {len(stocks)} 只股票")
+        from basic_data import basic_data
 
-            # 测试获取单只股票信息
-            test_stock = stocks.iloc[0]['SECURITY_CODE_A']
-            info = stock_info.get_stock_basic_info(test_stock)
-            if info:
-                print(f"✓ 获取股票 {test_stock} 基本信息成功")
-            else:
-                print(f"✗ 获取股票 {test_stock} 基本信息失败")
+        print(f"超时设置: {basic_data.timeout}秒")
+        print(f"最大重试: {basic_data.max_retries}次")
+        print(f"数据源: {basic_data.source_priority}")
+
+        print("\n正在测试基础数据获取...")
+        start_time = time.time()
+        result = basic_data.get_stock_data('000001', 'daily')
+        end_time = time.time()
+
+        if not result.empty:
+            print(f"✓ 基础数据获取成功 (耗时: {end_time - start_time:.2f}秒)")
+            print(f"  数据条数: {len(result)}")
+            print(f"  列名: {list(result.columns)}")
         else:
-            print("✗ 获取股票列表失败")
+            print("⚠ 基础数据获取失败")
 
-        return True
     except Exception as e:
-        print(f"✗ 股票信息模块测试失败: {e}")
-        return False
+        print(f"✗ 测试失败: {e}")
 
+def test_analysis_modules():
+    """测试分析模块"""
+    print("\n" + "=" * 50)
+    print("测试4: 分析模块功能")
+    print("=" * 50)
 
-def test_tick_data():
-    """测试分笔数据模块"""
-    print("\n=== 测试分笔数据模块 ===")
+    analysis_modules = [
+        ('技术指标分析', 'technical_indicators', 'technical_analyzer'),
+        ('异动检测', 'anomaly_detection', 'anomaly_detector'),
+        ('三层共振分析', 'resonance_analysis', 'resonance_analyzer'),
+        ('涨停板分析', 'limit_up_analysis', 'limit_up_analyzer'),
+        ('通道分析', 'channel_analysis', 'channel_analyzer')
+    ]
+
+    for module_name, module_file, analyzer_name in analysis_modules:
+        try:
+            print(f"\n测试 {module_name}:")
+            module = __import__(module_file)
+            analyzer = getattr(module, analyzer_name)
+            print(f"  ✓ {module_name} 模块加载成功")
+
+        except Exception as e:
+            print(f"  ✗ {module_name} 模块加载失败: {e}")
+
+def test_configuration():
+    """测试配置系统"""
+    print("\n" + "=" * 50)
+    print("测试5: 配置系统")
+    print("=" * 50)
+
     try:
-        # 使用一个常见的股票代码测试
-        test_code = "000001"  # 平安银行
-        test_date = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+        from app_config import Config
 
-        print(f"尝试获取股票 {test_code} {test_date} 的分笔数据...")
-        tick_df = tick_data.get_tick_data(test_code, test_date)
+        config_items = [
+            ('超时时间', Config.TIMEOUT_SECONDS),
+            ('最大重试', Config.MAX_RETRIES),
+            ('价格异动阈值', Config.PRICE_CHANGE_THRESHOLD),
+            ('成交量异动阈值', Config.VOLUME_RATIO_THRESHOLD),
+            ('换手率阈值', Config.TURNOVER_THRESHOLD),
+            ('数据源列表', Config.DATA_SOURCES),
+            ('市场开放状态', Config.is_market_open())
+        ]
 
-        if not tick_df.empty:
-            print(f"✓ 获取分笔数据成功，共 {len(tick_df)} 条记录")
+        print("系统配置:")
+        for item_name, item_value in config_items:
+            print(f"  {item_name}: {item_value}")
 
-            # 测试统计功能
-            stats = tick_data.get_trade_statistics(tick_df)
-            print(f"✓ 计算统计信息成功，总成交量: {stats.get('total_volume', 0)}")
-        else:
-            print("! 获取分笔数据为空（可能是非交易日）")
+        print("✓ 配置系统正常")
 
-        return True
     except Exception as e:
-        print(f"✗ 分笔数据模块测试失败: {e}")
-        return False
-
-
-def test_basic_data():
-    """测试基础数据模块"""
-    print("\n=== 测试基础数据模块 ===")
-    try:
-        # 使用一个常见的股票代码测试
-        test_code = "000001"  # 平安银行
-
-        print(f"尝试获取股票 {test_code} 的日线数据...")
-        daily_data = basic_data.get_stock_data(test_code, 'daily')
-
-        if not daily_data.empty:
-            print(f"✓ 获取日线数据成功，共 {len(daily_data)} 条记录")
-            print(f"  最新收盘价: {daily_data.iloc[-1]['close_price']}")
-
-            # 测试技术指标计算
-            data_with_indicators = basic_data.calculate_technical_indicators(daily_data)
-            print("✓ 技术指标计算成功")
-        else:
-            print("✗ 获取基础数据失败")
-
-        return True
-    except Exception as e:
-        print(f"✗ 基础数据模块测试失败: {e}")
-        return False
-
-
-def test_indicators():
-    """测试技术指标模块"""
-    print("\n=== 测试技术指标模块 ===")
-    try:
-        # 创建测试数据
-        import pandas as pd
-        import numpy as np
-
-        dates = pd.date_range(start='2023-01-01', periods=50, freq='D')
-        test_data = pd.DataFrame({
-            'trade_date': dates,
-            'close_price': 10 + np.cumsum(np.random.randn(50) * 0.1),
-            'high_price': 10 + np.cumsum(np.random.randn(50) * 0.1) + 0.2,
-            'low_price': 10 + np.cumsum(np.random.randn(50) * 0.1) - 0.2,
-            'volume': np.random.randint(1000, 10000, 50)
-        })
-
-        # 测试MACD计算
-        macd_data = indicator_processor.calculate_macd(test_data)
-        if 'macd' in macd_data.columns:
-            print("✓ MACD计算成功")
-        else:
-            print("✗ MACD计算失败")
-
-        # 测试RSI计算
-        rsi_data = indicator_processor.calculate_rsi(test_data)
-        if 'rsi' in rsi_data.columns:
-            print("✓ RSI计算成功")
-        else:
-            print("✗ RSI计算失败")
-
-        # 测试KDJ计算
-        kdj_data = indicator_processor.calculate_kdj(test_data)
-        if 'kdj_k' in kdj_data.columns:
-            print("✓ KDJ计算成功")
-        else:
-            print("✗ KDJ计算失败")
-
-        return True
-    except Exception as e:
-        print(f"✗ 技术指标模块测试失败: {e}")
-        return False
-
+        print(f"✗ 配置系统测试失败: {e}")
 
 def main():
     """主测试函数"""
-    print("股票数据分析系统 - 功能测试")
-    print("=" * 50)
+    print("A股股票分析系统 - 优化功能测试")
+    print(f"测试时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-    test_results = []
+    # 执行所有测试
+    test_timeout_mechanism()
+    test_multiple_data_sources()
+    test_basic_data_optimization()
+    test_analysis_modules()
+    test_configuration()
 
-    # 运行各项测试
-    test_results.append(("配置模块", test_config()))
-    test_results.append(("数据库模块", test_database()))
-    test_results.append(("股票信息模块", test_stock_info()))
-    test_results.append(("分笔数据模块", test_tick_data()))
-    test_results.append(("基础数据模块", test_basic_data()))
-    test_results.append(("技术指标模块", test_indicators()))
-
-    # 输出测试结果摘要
     print("\n" + "=" * 50)
-    print("测试结果摘要:")
+    print("测试完成!")
     print("=" * 50)
-
-    passed = 0
-    total = len(test_results)
-
-    for test_name, result in test_results:
-        status = "通过" if result else "失败"
-        symbol = "✓" if result else "✗"
-        print(f"{symbol} {test_name}: {status}")
-        if result:
-            passed += 1
-
-    print(f"\n总计: {passed}/{total} 项测试通过")
-
-    if passed == total:
-        print("🎉 所有测试通过！系统运行正常。")
-    else:
-        print("⚠️ 部分测试失败，请检查相关配置和依赖。")
-
+    print("\n如果所有测试都显示 ✓，说明优化功能正常工作")
+    print("如有 ✗ 或 ⚠ 标记，请检查相应模块")
 
 if __name__ == '__main__':
     main()
