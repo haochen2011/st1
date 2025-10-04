@@ -214,31 +214,101 @@ class StockInfo:
     def save_stock_info_to_db(self, stock_info_dict):
         """保存单个股票信息到数据库（支持增强数据库管理器）"""
         try:
+            # 验证和清理数据
+            cleaned_data = self._validate_and_clean_stock_data(stock_info_dict)
+
             if hasattr(db_manager, 'upsert_dataframe'):
                 # 使用增强数据库管理器的upsert功能
-                df = pd.DataFrame([stock_info_dict])
+                df = pd.DataFrame([cleaned_data])
                 return db_manager.upsert_dataframe(
                     df, 'stock_info',
                     unique_columns=['stock_code']
                 )
             else:
-                # 使用传统的SQL方式
-                sql = """
-                INSERT INTO stock_info (stock_code, stock_name, market, list_date, total_shares, float_shares, industry)
-                VALUES (:stock_code, :stock_name, :market, :list_date, :total_shares, :float_shares, :industry)
-                ON DUPLICATE KEY UPDATE
-                stock_name = VALUES(stock_name),
-                list_date = VALUES(list_date),
-                total_shares = VALUES(total_shares),
-                float_shares = VALUES(float_shares),
-                industry = VALUES(industry),
-                updated_at = CURRENT_TIMESTAMP
-                """
-                return db_manager.execute_sql(sql, stock_info_dict)
+                # 使用传统的SQL方式，但首先检查字段是否存在
+                return self._save_with_traditional_sql(cleaned_data)
 
         except Exception as e:
             logger.error(f"保存股票信息到数据库失败: {e}")
             return False
+
+    def _validate_and_clean_stock_data(self, stock_info_dict):
+        """验证和清理股票数据"""
+        cleaned_data = {}
+
+        # 必需字段
+        required_fields = ['stock_code', 'stock_name', 'market']
+        for field in required_fields:
+            if field in stock_info_dict and stock_info_dict[field]:
+                cleaned_data[field] = str(stock_info_dict[field]).strip()
+            else:
+                raise ValueError(f"缺少必需字段: {field}")
+
+        # 可选字段
+        optional_fields = {
+            'list_date': lambda x: x if isinstance(x, (type(None), date)) else None,
+            'total_shares': lambda x: int(float(x)) if x and str(x).replace('.', '').isdigit() else None,
+            'float_shares': lambda x: int(float(x)) if x and str(x).replace('.', '').isdigit() else None,
+            'industry': lambda x: str(x).strip() if x else None
+        }
+
+        for field, converter in optional_fields.items():
+            try:
+                cleaned_data[field] = converter(stock_info_dict.get(field))
+            except:
+                cleaned_data[field] = None
+
+        return cleaned_data
+
+    def _save_with_traditional_sql(self, stock_info_dict):
+        """使用传统SQL方式保存，包含字段检查"""
+        try:
+            # 检查表结构，获取可用字段
+            available_fields = self._get_available_table_fields('stock_info')
+
+            # 构建动态SQL
+            data_fields = []
+            values_fields = []
+            update_fields = []
+            params = {}
+
+            for field, value in stock_info_dict.items():
+                if field in available_fields and field != 'id':
+                    data_fields.append(field)
+                    values_fields.append(f':{field}')
+                    if field not in ['stock_code', 'created_at']:  # 不更新主键和创建时间
+                        update_fields.append(f'{field} = VALUES({field})')
+                    params[field] = value
+
+            if not data_fields:
+                raise ValueError("没有可用的字段进行插入")
+
+            sql = f"""
+            INSERT INTO stock_info ({', '.join(data_fields)})
+            VALUES ({', '.join(values_fields)})
+            ON DUPLICATE KEY UPDATE
+            {', '.join(update_fields)},
+            updated_at = CURRENT_TIMESTAMP
+            """
+
+            return db_manager.execute_sql(sql, params)
+
+        except Exception as e:
+            logger.error(f"使用传统SQL保存失败: {e}")
+            return False
+
+    def _get_available_table_fields(self, table_name):
+        """获取表的可用字段列表"""
+        try:
+            sql = f"SHOW COLUMNS FROM {table_name}"
+            result = db_manager.query_to_dataframe(sql)
+            if not result.empty:
+                return result['Field'].tolist()
+            return []
+        except Exception as e:
+            logger.warning(f"获取表字段失败: {e}")
+            # 返回基本字段作为后备
+            return ['stock_code', 'stock_name', 'market', 'list_date', 'created_at', 'updated_at']
 
     def batch_save_stock_info_to_db(self, stock_info_list):
         """批量保存股票信息到数据库"""

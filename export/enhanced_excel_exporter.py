@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 增强的Excel导出器
@@ -359,10 +358,30 @@ class EnhancedExcelExporter:
         except Exception as e:
             logger.error(f"导出热门股票详情失败: {e}")
 
-    def _export_indicators_summary(self, wb: Workbook):
+    def _check_table_column_exists(self, table_name, column_name):
+        """检查表中是否存在指定字段"""
+        try:
+            sql = f"SHOW COLUMNS FROM {table_name} LIKE '{column_name}'"
+            result = self.db_manager.query_to_dataframe(sql)
+            return not result.empty
+        except:
+            return False
+
+    def _export_indicators_summary(self, wb):
         """导出技术指标摘要"""
         try:
             ws = wb.create_sheet("技术指标摘要")
+
+            # 检查indicator_data表中是否存在必要字段
+            has_indicator_value = self._check_table_column_exists('indicator_data', 'indicator_value')
+            has_trade_date = self._check_table_column_exists('indicator_data', 'trade_date')
+
+            if not has_indicator_value or not has_trade_date:
+                # 如果字段不存在，创建一个提示信息
+                ws.append(["技术指标数据", "字段缺失", "请先更新数据库结构"])
+                ws.append(["缺失字段", f"indicator_value: {'存在' if has_indicator_value else '缺失'}", f"trade_date: {'存在' if has_trade_date else '缺失'}"])
+                logger.warning("indicator_data表缺少必要字段，跳过技术指标摘要导出")
+                return
 
             # 获取技术指标数据
             sql = """
@@ -377,43 +396,45 @@ class EnhancedExcelExporter:
             ORDER BY i.stock_code, i.indicator_name
             """
 
-            df = enhanced_db_manager.query_to_dataframe(sql)
+            df = self.db_manager.query_to_dataframe(sql)
 
-            if not df.empty:
-                # 数据透视，将指标名称作为列
-                pivot_df = df.pivot_table(
-                    index=['stock_code', 'stock_name'],
-                    columns='indicator_name',
-                    values='indicator_value',
-                    aggfunc='first'
-                ).reset_index()
+            if df.empty:
+                ws.append(["股票代码", "股票名称", "指标名称", "指标值", "交易日期"])
+                ws.append(["暂无数据", "", "", "", ""])
+                logger.info("技术指标数据为空")
+                return
 
-                # 重命名列
-                pivot_df = pivot_df.rename(columns={
-                    'stock_code': '股票代码',
-                    'stock_name': '股票名称'
-                })
+            # 数据透视，将指标名称作为列
+            pivot_df = df.pivot_table(
+                index=['stock_code', 'stock_name'],
+                columns='indicator_name',
+                values='indicator_value',
+                aggfunc='first'
+            ).reset_index()
 
-                # 添加标题
-                ws['A1'] = "技术指标摘要 (最新数据)"
-                col_count = len(pivot_df.columns)
-                ws.merge_cells(f'A1:{chr(64 + col_count)}1')
-                ws['A1'].style = self.title_style
+            # 重命名列
+            pivot_df = pivot_df.rename(columns={
+                'stock_code': '股票代码',
+                'stock_name': '股票名称'
+            })
 
-                # 添加数据
-                for r in dataframe_to_rows(pivot_df, index=False, header=True):
-                    ws.append(r)
+            # 添加标题
+            ws['A1'] = "技术指标摘要 (最新数据)"
+            col_count = len(pivot_df.columns)
+            ws.merge_cells(f'A1:{chr(64 + col_count)}1')
+            ws['A1'].style = self.title_style
 
-                # 应用样式
-                self._apply_table_style(ws, len(pivot_df) + 1, col_count, start_row=2)
+            # 添加数据
+            for r in dataframe_to_rows(pivot_df, index=False, header=True):
+                ws.append(r)
 
-                # 自动调整列宽
-                self._auto_fit_columns(ws)
+            # 应用样式
+            self._apply_table_style(ws, len(pivot_df) + 1, col_count, start_row=2)
 
-                logger.info(f"技术指标摘要导出完成: {len(pivot_df)} 条记录")
-            else:
-                ws['A1'] = "无技术指标数据"
+            # 自动调整列宽
+            self._auto_fit_columns(ws)
 
+            logger.info(f"技术指标摘要导出完成: {len(pivot_df)} 条记录")
         except Exception as e:
             logger.error(f"导出技术指标摘要失败: {e}")
 
@@ -464,120 +485,161 @@ class EnhancedExcelExporter:
             logger.warning(f"获取分笔数据统计失败: {e}")
             return {'stocks_with_tick_data': 0, 'latest_tick_date': None}
 
-    def _export_market_statistics(self, wb: Workbook):
-        """导出市场统计数据"""
+    def _export_market_statistics(self, wb):
+        """导出市场统计信息"""
         try:
             ws = wb.create_sheet("市场统计")
 
-            # 获取各种统计数据
-            stats = []
+            # 定义周期表
+            periods = ['daily', '1hour', '30min', '15min', '5min', '1min']
 
-            # 1. 股票总数统计
-            stock_count_sql = """
-            SELECT
-                COUNT(*) as total_stocks,
-                SUM(CASE WHEN market = 'sh' THEN 1 ELSE 0 END) as sh_stocks,
-                SUM(CASE WHEN market = 'sz' THEN 1 ELSE 0 END) as sz_stocks
-            FROM stock_info
-            """
-            stock_stats = enhanced_db_manager.query_to_dataframe(stock_count_sql)
+            # 查找存在的basic_data表
+            available_tables = []
+            for period in periods:
+                table_name = f"basic_data_{period}"
+                has_table = self._check_table_exists(table_name)
+                if has_table:
+                    available_tables.append((period, table_name))
 
-            if not stock_stats.empty:
-                stats.append(['股票总数', stock_stats.iloc[0]['total_stocks']])
-                stats.append(['上海A股', stock_stats.iloc[0]['sh_stocks']])
-                stats.append(['深圳A股', stock_stats.iloc[0]['sz_stocks']])
+            if not available_tables:
+                ws.append(["市场统计", "无可用数据表", "未找到任何basic_data_{period}表"])
+                logger.warning("未找到任何basic_data表")
+                return
 
-            # 2. 行业分布统计
-            industry_sql = """
-            SELECT industry, COUNT(*) as count
-            FROM stock_info
-            WHERE industry IS NOT NULL AND industry != ''
-            GROUP BY industry
-            ORDER BY count DESC
-            LIMIT 10
-            """
-            industry_stats = enhanced_db_manager.query_to_dataframe(industry_sql)
+            # 使用第一个可用的表（通常是daily）进行统计
+            primary_period, primary_table = available_tables[0]
+            logger.info(f"使用{primary_table}进行市场统计")
 
-            # 3. 数据统计 - 使用安全查询方式
-            data_stats = pd.DataFrame()
-            stats_data = {}
+            # 检查表中是否有trade_date字段
+            has_trade_date = self._check_table_column_exists(primary_table, 'trade_date')
 
-            # 检查basic_data表
-            if enhanced_db_manager.table_exists('basic_data'):
-                try:
-                    basic_stats_sql = """
+            if not has_trade_date:
+                ws.append(["市场统计", "字段缺失", f"{primary_table}表缺少trade_date字段"])
+                logger.warning(f"{primary_table}表缺少trade_date字段，使用替代统计方案")
+
+                # 使用替代查询方案
+                sql = f"""
+                    SELECT
+                        COUNT(DISTINCT stock_code) as stocks_with_basic_data,
+                        MAX(created_at) as latest_basic_date
+                    FROM {primary_table}
+                    WHERE period = '{primary_period}'
+                """
+            else:
+                # 原始查询
+                sql = f"""
                     SELECT
                         COUNT(DISTINCT stock_code) as stocks_with_basic_data,
                         MAX(trade_date) as latest_basic_date
-                    FROM basic_data
-                    WHERE period = 'daily'
-                    """
-                    basic_result = enhanced_db_manager.query_to_dataframe(basic_stats_sql)
-                    if not basic_result.empty:
-                        stats_data['stocks_with_basic_data'] = basic_result.iloc[0]['stocks_with_basic_data']
-                        stats_data['latest_basic_date'] = basic_result.iloc[0]['latest_basic_date']
-                except Exception as e:
-                    logger.warning(f"查询basic_data统计失败: {e}")
-                    stats_data['stocks_with_basic_data'] = 0
-                    stats_data['latest_basic_date'] = None
+                    FROM {primary_table}
+                    WHERE period = '{primary_period}'
+                """
+
+            basic_stats = self.db_manager.query_to_dataframe(sql)
+
+            # 创建统计摘要
+            ws.append(["市场统计概览", ""])
+            ws.append(["", ""])
+
+            if not basic_stats.empty:
+                stats = basic_stats.iloc[0]
+
+                # 写入统计数据
+                ws.append(["统计项", "数值"])
+                ws.append(["主要数据周期", primary_period])
+                ws.append(["有基础数据的股票数", stats.get('stocks_with_basic_data', 0)])
+                ws.append(["最新基础数据日期", str(stats.get('latest_basic_date', '未知'))])
+
+                # 统计各周期表的数据
+                ws.append(["", ""])
+                ws.append(["各周期数据统计", ""])
+                ws.append(["周期", "股票数量", "最新日期"])
+
+                for period, table_name in available_tables:
+                    try:
+                        period_sql = f"""
+                        SELECT
+                            COUNT(DISTINCT stock_code) as count,
+                            MAX(trade_date) as max_date
+                        FROM {table_name}
+                        WHERE period = '{period}'
+                        """
+                        period_stats = self.db_manager.query_to_dataframe(period_sql)
+
+                        if not period_stats.empty:
+                            period_data = period_stats.iloc[0]
+                            ws.append([
+                                period,
+                                period_data.get('count', 0),
+                                str(period_data.get('max_date', '无数据'))
+                            ])
+                        else:
+                            ws.append([period, 0, '无数据'])
+
+                    except Exception as e:
+                        logger.warning(f"统计{table_name}失败: {e}")
+                        ws.append([period, '查询失败', str(e)])
+
+                # 添加股票活跃度统计（如果有amount字段）
+                if self._check_table_column_exists(primary_table, 'amount'):
+                    try:
+                        activity_sql = f"""
+                        SELECT
+                            stock_code,
+                            AVG(amount) as avg_amount,
+                            COUNT(*) as trading_days
+                        FROM {primary_table}
+                        WHERE period = '{primary_period}'
+                          AND amount > 0
+                          AND trade_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+                        GROUP BY stock_code
+                        ORDER BY avg_amount DESC
+                        LIMIT 10
+                        """
+
+                        activity_stats = self.db_manager.query_to_dataframe(activity_sql)
+
+                        if not activity_stats.empty:
+                            ws.append(["", ""])
+                            ws.append(["活跃股票TOP10 (近30天平均成交金额)", ""])
+                            ws.append(["股票代码", "平均成交金额(元)", "交易天数"])
+
+                            for _, row in activity_stats.iterrows():
+                                ws.append([
+                                    row['stock_code'],
+                                    f"{row['avg_amount']:,.2f}",
+                                    int(row['trading_days'])
+                                ])
+
+                    except Exception as e:
+                        logger.warning(f"活跃度统计失败: {e}")
+
+                logger.info("市场统计信息导出完成")
             else:
-                stats_data['stocks_with_basic_data'] = 0
-                stats_data['latest_basic_date'] = None
-
-            # 检查tick_data表 - 由于是分表结构，需要查找最新的表
-            tick_stats_data = self._get_tick_data_statistics()
-            stats_data.update(tick_stats_data)
-
-            # 创建DataFrame
-            if stats_data:
-                data_stats = pd.DataFrame([stats_data])
-
-            if not data_stats.empty:
-                stats.append(['有基础数据的股票数', data_stats.iloc[0]['stocks_with_basic_data']])
-                stats.append(['有分笔数据的股票数', data_stats.iloc[0]['stocks_with_tick_data']])
-                stats.append(['最新基础数据日期', str(data_stats.iloc[0]['latest_basic_date'])])
-                stats.append(['最新分笔数据日期', str(data_stats.iloc[0]['latest_tick_date'])])
-
-            # 创建统计表
-            ws['A1'] = "市场统计概览"
-            ws.merge_cells('A1:B1')
-            ws['A1'].style = self.title_style
-
-            # 基本统计
-            ws['A3'] = "指标"
-            ws['B3'] = "数值"
-            ws['A3'].style = self.header_style
-            ws['B3'].style = self.header_style
-
-            row = 4
-            for stat in stats:
-                ws.cell(row=row, column=1, value=stat[0])
-                ws.cell(row=row, column=2, value=stat[1])
-                row += 1
-
-            # 行业分布
-            if not industry_stats.empty:
-                start_row = row + 2
-                ws.cell(row=start_row, column=1, value="热门行业分布")
-                ws.merge_cells(f'A{start_row}:B{start_row}')
-                ws.cell(row=start_row, column=1).style = self.title_style
-
-                ws.cell(row=start_row + 2, column=1, value="行业")
-                ws.cell(row=start_row + 2, column=2, value="股票数量")
-                ws.cell(row=start_row + 2, column=1).style = self.header_style
-                ws.cell(row=start_row + 2, column=2).style = self.header_style
-
-                for idx, row_data in industry_stats.iterrows():
-                    ws.cell(row=start_row + 3 + idx, column=1, value=row_data['industry'])
-                    ws.cell(row=start_row + 3 + idx, column=2, value=row_data['count'])
-
-            # 自动调整列宽
-            self._auto_fit_columns(ws)
-
-            logger.info("市场统计导出完成")
+                ws.append(["统计项", "数值"])
+                ws.append(["数据查询失败", ""])
+                logger.warning("市场统计数据查询失败")
 
         except Exception as e:
             logger.error(f"导出市场统计失败: {e}")
+            # 创建错误信息页面
+            try:
+                ws = wb.create_sheet("市场统计")
+                ws.append(["错误信息", str(e)])
+                ws.append(["建议", "1. 运行 python fix_database.py 修复"])
+                ws.append(["建议", "2. 检查basic_data_{period}表是否存在"])
+                ws.append(["建议", "3. 确保数据库连接正常"])
+            except:
+                pass
+
+    def _check_table_exists(self, table_name):
+        """检查表是否存在"""
+        try:
+            sql = f"SHOW TABLES LIKE '{table_name}'"
+            result = self.db_manager.query_to_dataframe(sql)
+            return not result.empty
+        except:
+            return False
 
     def _export_tick_data_sample(self, wb: Workbook):
         """导出分笔数据样本"""
@@ -653,6 +715,143 @@ class EnhancedExcelExporter:
 
         except Exception as e:
             logger.error(f"导出分笔数据样本失败: {e}")
+
+    def _export_tick_data_summary(self, wb):
+        """导出分笔数据摘要"""
+        try:
+            ws = wb.create_sheet("分笔数据摘要")
+
+            # 获取最新的分笔数据表
+            today = datetime.now().strftime('%Y%m%d')
+            yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+
+            # 尝试多个可能的表名
+            possible_tables = [f"tick_data_{today}", f"tick_data_{yesterday}"]
+            table_name = None
+
+            for table in possible_tables:
+                check_table_sql = f"SHOW TABLES LIKE '{table}'"
+                table_exists = self.db_manager.query_to_dataframe(check_table_sql)
+                if not table_exists.empty:
+                    table_name = table
+                    break
+
+            if not table_name:
+                ws.append(["分笔数据", "表不存在", f"未找到今日或昨日的分笔数据表"])
+                logger.warning("未找到可用的分笔数据表")
+                return
+
+            # 在查询前设置连接字符集
+            try:
+                charset_sql = "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"
+                self.db_manager.execute_sql(charset_sql)
+
+                # 彻底修复表的字符集
+                fix_tick_charset_sql = f"ALTER TABLE {table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                self.db_manager.execute_sql(fix_tick_charset_sql)
+
+                fix_stock_charset_sql = "ALTER TABLE stock_info CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                self.db_manager.execute_sql(fix_stock_charset_sql)
+
+            except Exception as charset_error:
+                logger.warning(f"修复字符集失败: {charset_error}")
+
+            # 使用分步查询避免字符集冲突
+            # 第一步：获取分笔数据
+            tick_sql = f"""
+            SELECT stock_code, trade_time, price, volume, amount, trade_type
+            FROM {table_name}
+            WHERE trade_date = (
+                SELECT MAX(trade_date) FROM {table_name}
+                WHERE trade_date IS NOT NULL
+            )
+            ORDER BY trade_time DESC
+            LIMIT 1000
+            """
+
+            df = self.db_manager.query_to_dataframe(tick_sql)
+
+            if df.empty:
+                # 如果按trade_date查询为空，尝试其他方式
+                tick_sql_alt = f"""
+                SELECT stock_code, trade_time, price, volume, amount, trade_type
+                FROM {table_name}
+                ORDER BY trade_time DESC
+                LIMIT 1000
+                """
+                df = self.db_manager.query_to_dataframe(tick_sql_alt)
+
+            if df.empty:
+                ws.append(["股票代码", "股票名称", "交易时间", "价格", "成交量", "成交金额", "交易类型"])
+                ws.append(["暂无数据", "", "", "", "", "", ""])
+                logger.info("分笔数据为空")
+                return
+
+            # 第二步：分别获取股票名称，避免JOIN冲突
+            stock_names = {}
+            unique_codes = df['stock_code'].unique()
+
+            for code in unique_codes[:50]:  # 限制查询数量避免性能问题
+                try:
+                    # 使用参数化查询避免字符集问题
+                    name_sql = "SELECT stock_name FROM stock_info WHERE stock_code = %s"
+                    name_result = self.db_manager.execute_query_with_params(name_sql, (code,))
+
+                    if name_result and len(name_result) > 0:
+                        stock_names[code] = name_result[0][0] if name_result[0][0] else '未知'
+                    else:
+                        stock_names[code] = '未知'
+
+                except Exception as e:
+                    logger.warning(f"获取股票 {code} 名称失败: {e}")
+                    stock_names[code] = '未知'
+
+            # 添加股票名称到DataFrame
+            df['stock_name'] = df['stock_code'].map(stock_names).fillna('未知')
+
+            # 重新排列列顺序
+            df = df[['stock_code', 'stock_name', 'trade_time', 'price', 'volume', 'amount', 'trade_type']]
+
+            # 添加标题
+            ws['A1'] = f"分笔数据摘要 (来自{table_name})"
+            ws.merge_cells('A1:G1')
+            ws['A1'].style = self.title_style
+
+            # 添加列标题
+            headers = ['股票代码', '股票名称', '交易时间', '价格', '成交量', '成交金额', '交易类型']
+            ws.append(headers)
+
+            # 添加数据
+            for _, row in df.iterrows():
+                ws.append([
+                    row['stock_code'],
+                    row['stock_name'],
+                    str(row['trade_time']),
+                    float(row['price']) if row['price'] else 0,
+                    int(row['volume']) if row['volume'] else 0,
+                    float(row['amount']) if row['amount'] else 0,
+                    str(row['trade_type']) if row['trade_type'] else ''
+                ])
+
+            # 应用样式
+            self._apply_table_style(ws, len(df) + 2, 7, start_row=2)
+
+            # 自动调整列宽
+            self._auto_fit_columns(ws)
+
+            logger.info(f"分笔数据摘要导出完成: {len(df)} 条记录")
+
+        except Exception as e:
+            logger.error(f"导出分笔数据摘要失败: {e}")
+            # 创建错误信息页面
+            try:
+                ws = wb.create_sheet("分笔数据摘要")
+                ws.append(["错误信息", str(e)])
+                ws.append(["建议", "1. 检查数据库字符集设置"])
+                ws.append(["建议", "2. 运行 python fix_database.py 修复"])
+                ws.append(["建议", "3. 确保分笔数据表存在"])
+            except:
+                pass
 
     def _apply_table_style(self, ws, row_count: int, col_count: int, start_row: int = 1):
         """应用表格样式"""

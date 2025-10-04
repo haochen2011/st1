@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A股数据管理系统 - 一键启动脚本
 提供最常用功能的快速访问
@@ -12,6 +10,13 @@ from pathlib import Path
 
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# 应用Excel导出器补丁
+try:
+    from export.enhanced_excel_exporter_patch import patch_excel_exporter
+    patch_excel_exporter()
+except ImportError:
+    pass  # 补丁文件不存在时忽略
 
 # 新增：打印Python搜索路径，检查是否包含目标目录
 print("当前Python搜索路径:")
@@ -48,6 +53,15 @@ def check_environment():
     if not os.path.exists('config.ini'):
         print("⚠️  配置文件 config.ini 不存在，将创建默认配置")
         create_default_config()
+
+    # 检查数据库表结构
+    print("🔍 检查数据库表结构...")
+    try:
+        from data.database_utils import ensure_basic_data_tables
+        ensure_basic_data_tables()
+    except Exception as e:
+        print(f"⚠️  数据库表检查失败: {e}")
+        print("   建议先运行数据更新功能")
 
     print("✅ 环境检查通过")
     return True
@@ -110,8 +124,9 @@ def quick_menu():
     print("3. ⏰ 下载昨日分笔数据")
     print("4. 📊 导出所有数据到Excel")
     print("5. 🔍 查询单个股票")
-    print("6. 📱 启动完整管理界面")
-    print("7. ⚙️  系统配置和帮助")
+    print("6. 🔬 数据分析与导出")
+    print("7. 📱 启动完整管理界面")
+    print("8. ⚙️  系统配置和帮助")
     print("0. 🚪 退出")
     print("-" * 60)
 
@@ -273,14 +288,18 @@ def query_stock():
         print(f"行业: {stock_info.iloc[0]['industry']}")
         print(f"上市日期: {stock_info.iloc[0]['list_date']}")
 
-        # 查询最新价格
+        # 查询最新价格 - 使用daily表
         price_sql = """
         SELECT trade_date, close_price, volume, amount
-        FROM basic_data
-        WHERE stock_code = :stock_code AND period = 'daily'
+        FROM basic_data_daily
+        WHERE stock_code = :stock_code
         ORDER BY trade_date DESC LIMIT 1
         """
-        price_data = enhanced_db_manager.query_to_dataframe(price_sql, {'stock_code': stock_code})
+        price_data = enhanced_db_manager.safe_query_to_dataframe(
+            price_sql,
+            {'stock_code': stock_code},
+            required_tables=['basic_data_daily']
+        )
 
         if not price_data.empty:
             latest = price_data.iloc[0]
@@ -291,6 +310,216 @@ def query_stock():
 
     except Exception as e:
         print(f"❌ 查询失败: {e}")
+
+
+def data_analysis_menu():
+    """数据分析菜单"""
+    print("\n🔬 数据分析与导出")
+    print("=" * 50)
+    print("1. 📊 三层共振分析")
+    print("2. 📈 涨停板分析")
+    print("3. 🔍 异动检测分析")
+    print("4. 📉 多空通道分析")
+    print("5. 📋 导出分析结果到Excel")
+    print("6. 🔄 按时间周期导出基础数据")
+    print("0. 🔙 返回主菜单")
+    print("-" * 50)
+
+    while True:
+        try:
+            choice = input("请选择分析类型 (0-6): ").strip()
+
+            if choice == '0':
+                break
+            elif choice == '1':
+                run_resonance_analysis()
+            elif choice == '2':
+                run_limit_up_analysis()
+            elif choice == '3':
+                run_anomaly_detection()
+            elif choice == '4':
+                run_channel_analysis()
+            elif choice == '5':
+                export_analysis_results()
+            elif choice == '6':
+                export_basic_data_by_period()
+            else:
+                print("❌ 无效选择，请重新输入")
+                continue
+
+            input("\n按回车键继续...")
+
+        except Exception as e:
+            print(f"❌ 操作失败: {e}")
+            input("按回车键继续...")
+
+
+def run_resonance_analysis():
+    """运行三层共振分析"""
+    print("\n📊 三层共振分析...")
+
+    try:
+        from analysis.resonance_analysis import resonance_analyzer
+
+        result = resonance_analyzer.analyze_all_stocks()
+
+        print(f"✅ 分析完成，发现 {len(result)} 只股票符合三层共振条件")
+
+        if result:
+            print("\n🎯 三层共振股票列表:")
+            for stock in result[:10]:  # 显示前10只
+                print(f"   • {stock['stock_code']} - {stock['stock_name']}")
+
+    except Exception as e:
+        print(f"❌ 三层共振分析失败: {e}")
+
+
+def run_limit_up_analysis():
+    """运行涨停板分析"""
+    print("\n📈 涨停板分析...")
+
+    try:
+        from analysis.limit_up_analysis import LimitUpAnalysis
+
+        analyzer = LimitUpAnalysis()
+        result = analyzer.analyze_recent_limit_ups()
+
+        print(f"✅ 分析完成，发现 {len(result)} 只涨停股票")
+
+        if result:
+            print("\n🔥 涨停股票列表:")
+            for stock in result[:10]:  # 显示前10只
+                print(f"   • {stock['stock_code']} - {stock['stock_name']} (涨停原因: {stock.get('reason', '未知')})")
+
+    except Exception as e:
+        print(f"❌ 涨停板分析失败: {e}")
+
+
+def run_anomaly_detection():
+    """运行异动检测"""
+    print("\n🔍 异动检测分析...")
+
+    try:
+        from analysis.anomaly_detection import AnomalyDetection
+
+        detector = AnomalyDetection()
+        result = detector.detect_anomalies()
+
+        print(f"✅ 检测完成，发现 {len(result)} 只异动股票")
+
+        if result:
+            print("\n⚡ 异动股票列表:")
+            for stock in result[:10]:  # 显示前10只
+                print(f"   • {stock['stock_code']} - {stock['stock_name']} (异动类型: {stock.get('anomaly_type', '未知')})")
+
+    except Exception as e:
+        print(f"❌ 异动检测失败: {e}")
+
+
+def run_channel_analysis():
+    """运行多空通道分析"""
+    print("\n📉 多空通道分析...")
+
+    try:
+        from analysis.channel_analysis import ChannelAnalysis
+
+        analyzer = ChannelAnalysis()
+        result = analyzer.analyze_channels()
+
+        print(f"✅ 分析完成，共分析 {len(result)} 只股票的通道状态")
+
+        if result:
+            bullish = [s for s in result if s.get('channel_status') == 'bullish']
+            bearish = [s for s in result if s.get('channel_status') == 'bearish']
+
+            print(f"\n📈 看多信号: {len(bullish)} 只")
+            print(f"📉 看空信号: {len(bearish)} 只")
+
+    except Exception as e:
+        print(f"❌ 多空通道分析失败: {e}")
+
+
+def export_analysis_results():
+    """导出分析结果"""
+    print("\n📋 导出分析结果到Excel...")
+
+    try:
+        from export.enhanced_excel_exporter import enhanced_excel_exporter
+
+        # 运行所有分析
+        print("正在运行全部分析...")
+
+        analysis_results = {}
+
+        # 三层共振分析
+        try:
+            from analysis.resonance_analysis import ResonanceAnalysis
+            analyzer = ResonanceAnalysis()
+            analysis_results['resonance'] = analyzer.analyze_all_stocks()
+        except:
+            analysis_results['resonance'] = []
+
+        # 涨停板分析
+        try:
+            from analysis.limit_up_analysis import LimitUpAnalysis
+            analyzer = LimitUpAnalysis()
+            analysis_results['limit_up'] = analyzer.analyze_recent_limit_ups()
+        except:
+            analysis_results['limit_up'] = []
+
+        # 异动检测
+        try:
+            from analysis.anomaly_detection import AnomalyDetection
+            detector = AnomalyDetection()
+            analysis_results['anomaly'] = detector.detect_anomalies()
+        except:
+            analysis_results['anomaly'] = []
+
+        # 多空通道分析
+        try:
+            from analysis.channel_analysis import ChannelAnalysis
+            analyzer = ChannelAnalysis()
+            analysis_results['channel'] = analyzer.analyze_channels()
+        except:
+            analysis_results['channel'] = []
+
+        # 导出到Excel
+        filename = enhanced_excel_exporter.export_analysis_results(analysis_results)
+        print(f"✅ 分析结果已导出到: {filename}")
+
+    except Exception as e:
+        print(f"❌ 导出分析结果失败: {e}")
+
+
+def export_basic_data_by_period():
+    """按时间周期导出基础数据"""
+    print("\n🔄 按时间周期导出基础数据...")
+    print("支持的时间周期: 1min, 5min, 10min, 15min, 30min, 1hour, daily, week, month, quarter, half_year, year")
+
+    period = input("请输入要导出的时间周期 (默认: daily): ").strip() or 'daily'
+
+    # 验证period是否有效
+    valid_periods = ['1min', '5min', '10min', '15min', '30min', '1hour', 'daily', 'week', 'month', 'quarter', 'half_year', 'year']
+    if period not in valid_periods:
+        print(f"❌ 无效的时间周期，支持的周期: {', '.join(valid_periods)}")
+        return
+
+    try:
+        from export.enhanced_excel_exporter import enhanced_excel_exporter
+        from data.enhanced_database import enhanced_db_manager
+
+        # 检查表是否存在
+        table_name = f"basic_data_{period}"
+        if not enhanced_db_manager.table_exists(table_name):
+            print(f"❌ 表 {table_name} 不存在，请先更新数据")
+            return
+
+        print(f"正在导出 {period} 周期的基础数据...")
+        filename = enhanced_excel_exporter.export_basic_data_by_period(period)
+        print(f"✅ 基础数据已导出到: {filename}")
+
+    except Exception as e:
+        print(f"❌ 导出基础数据失败: {e}")
 
 
 def show_help():
@@ -332,7 +561,7 @@ def main():
     while True:
         try:
             quick_menu()
-            choice = input("请选择操作 (0-7): ").strip()
+            choice = input("请选择操作 (0-8): ").strip()
 
             if choice == '0':
                 print("👋 感谢使用，再见！")
@@ -348,12 +577,14 @@ def main():
             elif choice == '5':
                 query_stock()
             elif choice == '6':
+                data_analysis_menu()
+            elif choice == '7':
                 print("\n🚀 启动完整管理界面...")
                 from utils.stock_data_manager import StockDataManager
                 manager = StockDataManager()
                 manager.run_interactive()
                 break
-            elif choice == '7':
+            elif choice == '8':
                 show_help()
             else:
                 print("❌ 无效选择，请重新输入")

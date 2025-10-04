@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 增强的数据库管理器
 优化批量插入和查询性能，支持事务管理和连接池
@@ -70,12 +68,117 @@ class EnhancedDatabaseManager:
 
             logger.info("数据库连接初始化成功")
 
-            # 创建表结构
+            # 在创建表后检查和修复表结构
             self.create_tables()
+            self.check_and_fix_table_structures()
+
+            logger.info("数据库初始化成功")
 
         except Exception as e:
             logger.error(f"数据库连接初始化失败: {e}")
             raise
+
+    def check_and_fix_table_structures(self):
+        """检查并修复表结构，确保所有必需的字段都存在"""
+        try:
+            with self.engine.connect() as conn:
+                # 检查stock_info表结构
+                self._fix_stock_info_table(conn)
+                # 检查indicator_data表结构
+                self._fix_indicator_data_table(conn)
+                # 检查basic_data表结构
+                self._fix_basic_data_table(conn)
+                logger.info("表结构检查和修复完成")
+        except Exception as e:
+            logger.error(f"表结构检查和修复失败: {e}")
+
+    def _fix_stock_info_table(self, conn):
+        """修复stock_info表结构"""
+        try:
+            # 检查表是否存在
+            result = conn.execute(text("SHOW TABLES LIKE 'stock_info'")).fetchone()
+            if not result:
+                # 创建表
+                self.create_tables()
+                return
+
+            # 检查字段是否存在
+            columns = conn.execute(text("SHOW COLUMNS FROM stock_info")).fetchall()
+            existing_columns = [col[0] for col in columns]
+
+            required_columns = {
+                'total_shares': 'BIGINT',
+                'float_shares': 'BIGINT',
+                'industry': 'VARCHAR(100)'
+            }
+
+            for column_name, column_type in required_columns.items():
+                if column_name not in existing_columns:
+                    alter_sql = f"ALTER TABLE stock_info ADD COLUMN {column_name} {column_type}"
+                    conn.execute(text(alter_sql))
+                    logger.info(f"已添加字段 {column_name} 到 stock_info 表")
+
+            # 统一字符集
+            conn.execute(text("ALTER TABLE stock_info CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+            conn.commit()
+
+        except Exception as e:
+            logger.error(f"修复stock_info表结构失败: {e}")
+
+    def _fix_indicator_data_table(self, conn):
+        """修复indicator_data表结构"""
+        try:
+            # 检查表是否存在
+            result = conn.execute(text("SHOW TABLES LIKE 'indicator_data'")).fetchone()
+            if not result:
+                self.create_tables()
+                return
+
+            # 检查字段是否存在
+            columns = conn.execute(text("SHOW COLUMNS FROM indicator_data")).fetchall()
+            existing_columns = [col[0] for col in columns]
+
+            required_columns = {
+                'indicator_value': 'DECIMAL(15,6)',
+                'trade_date': 'DATE'
+            }
+
+            for column_name, column_type in required_columns.items():
+                if column_name not in existing_columns:
+                    alter_sql = f"ALTER TABLE indicator_data ADD COLUMN {column_name} {column_type}"
+                    conn.execute(text(alter_sql))
+                    logger.info(f"已添加字段 {column_name} 到 indicator_data 表")
+
+            # 统一字符集
+            conn.execute(text("ALTER TABLE indicator_data CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+            conn.commit()
+
+        except Exception as e:
+            logger.error(f"修复indicator_data表结构失败: {e}")
+
+    def _fix_basic_data_table(self, conn):
+        """修复basic_data表结构"""
+        try:
+            # 检查表是否存在
+            result = conn.execute(text("SHOW TABLES LIKE 'basic_data'")).fetchone()
+            if not result:
+                return
+
+            # 检查字段是否存在
+            columns = conn.execute(text("SHOW COLUMNS FROM basic_data")).fetchall()
+            existing_columns = [col[0] for col in columns]
+
+            if 'trade_date' not in existing_columns:
+                alter_sql = "ALTER TABLE basic_data ADD COLUMN trade_date DATE"
+                conn.execute(text(alter_sql))
+                logger.info("已添加字段 trade_date 到 basic_data 表")
+
+            # 统一字符集
+            conn.execute(text("ALTER TABLE basic_data CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"))
+            conn.commit()
+
+        except Exception as e:
+            logger.error(f"修复basic_data表结构失败: {e}")
 
     def create_tables(self):
         """创建表结构"""
@@ -321,7 +424,20 @@ class EnhancedDatabaseManager:
             logger.error(f"预处理DataFrame失败: {e}")
             return df
 
-    def execute_sql(self, sql: str, params: Optional[Dict] = None) -> bool:
+    def execute_query_with_params(self, sql: str, params: tuple = None):
+        """执行参数化查询，返回原始结果"""
+        try:
+            with self.engine.connect() as conn:
+                if params:
+                    result = conn.execute(text(sql), params)
+                else:
+                    result = conn.execute(text(sql))
+                return result.fetchall()
+        except Exception as e:
+            logger.error(f"参数化查询失败: {e}")
+            return None
+
+    def execute_sql(self, sql: str, params: dict = None) -> bool:
         """执行SQL语句"""
         try:
             with self.engine.connect() as conn:
@@ -330,10 +446,18 @@ class EnhancedDatabaseManager:
                         conn.execute(text(sql), params)
                     else:
                         conn.execute(text(sql))
-            return True
-
+                return True
         except Exception as e:
             logger.error(f"执行SQL失败: {e}")
+            return False
+
+    def table_exists(self, table_name: str) -> bool:
+        """检查表是否存在"""
+        try:
+            sql = f"SHOW TABLES LIKE '{table_name}'"
+            result = self.query_to_dataframe(sql)
+            return not result.empty
+        except Exception:
             return False
 
     def query_to_dataframe(self, sql: str, params: Optional[Dict] = None) -> pd.DataFrame:
@@ -350,16 +474,6 @@ class EnhancedDatabaseManager:
         except Exception as e:
             logger.error(f"查询数据失败: {e}")
             return pd.DataFrame()
-
-    def table_exists(self, table_name: str) -> bool:
-        """检查表是否存在"""
-        try:
-            with self.engine.connect() as conn:
-                result = conn.execute(text(f"SHOW TABLES LIKE '{table_name}'"))
-                return result.fetchone() is not None
-        except Exception as e:
-            logger.error(f"检查表是否存在失败: {e}")
-            return False
 
     def safe_query_to_dataframe(self, sql: str, params: Optional[Dict] = None, required_tables: List[str] = None) -> pd.DataFrame:
         """安全查询数据，检查表是否存在"""
