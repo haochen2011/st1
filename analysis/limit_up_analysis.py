@@ -16,8 +16,9 @@ class LimitUpAnalyzer:
         self.data_fetcher = data_fetcher
 
     def generate_limit_up_report(self, trade_date):
-        """生成涨停板报告"""
+        """生成涨停板报告 - 使用实时行情数据"""
         try:
+            import time
             # 获取股票列表
             stock_list = self.data_fetcher.get_stock_list()
 
@@ -30,45 +31,66 @@ class LimitUpAnalyzer:
 
             limit_up_stocks = []
 
-            # 检查前100只股票的涨停情况（实际应用中可以检查所有股票）
-            sample_stocks = stock_list.head(100)
+            # API调用计数器
+            api_call_count = 0
 
-            for _, stock in sample_stocks.iterrows():
+            # 获取所有股票代码列表
+            stock_codes = stock_list['code'].tolist() if 'code' in stock_list.columns else []
+
+            # 分批获取实时数据，避免超时
+            batch_size = 50
+            for i in range(0, len(stock_codes), batch_size):
+                batch_codes = stock_codes[i:i + batch_size]
+
                 try:
-                    stock_code = stock.get('code', '')
-                    if not stock_code:
-                        continue
+                    # 使用实时行情数据
+                    realtime_data = self.data_fetcher.get_realtime_data(batch_codes)
+                    api_call_count += 1
 
-                    # 获取当日数据
-                    historical_data = self.data_fetcher.get_historical_data(
-                        stock_code,
-                        trade_date.replace('-', ''),
-                        trade_date.replace('-', '')
-                    )
+                    # 每调用10次API后休息1秒
+                    if api_call_count % 10 == 0:
+                        logger.info(f"已调用API {api_call_count} 次，休息1秒...")
+                        time.sleep(1)
+                    else:
+                        time.sleep(0.2)  # 正常调用间隔0.2秒
 
-                    if not historical_data.empty:
-                        latest = historical_data.iloc[-1]
-                        change_pct = latest.get('change_pct', 0)
+                    if not realtime_data.empty:
+                        for _, stock in realtime_data.iterrows():
+                            try:
+                                stock_code = stock.get('code', '')
+                                stock_name = stock.get('name', '')
+                                current_price = stock.get('current_price', 0)
+                                change_pct = stock.get('change_pct', 0)
+                                volume = stock.get('volume', 0)
+                                amount = stock.get('amount', 0)
 
-                        # 判断是否涨停（A股一般涨幅限制为10%，ST股为5%）
-                        is_st = stock.get('name', '').startswith('ST')
-                        limit_threshold = 4.5 if is_st else 9.5  # 考虑到实际交易中的微小差异
+                                if not stock_code:
+                                    continue
 
-                        if change_pct >= limit_threshold:
-                            limit_up_stocks.append({
-                                'stock_code': stock_code,
-                                'stock_name': stock.get('name', ''),
-                                'current_price': latest.get('close_price', 0),
-                                'change_pct': round(change_pct, 2),
-                                'volume': latest.get('volume', 0),
-                                'amount': latest.get('amount', 0),
-                                'first_limit_time': '09:30:00',  # 简化处理
-                                'limit_up_type': 'ST涨停' if is_st else '普通涨停'
-                            })
+                                # 判断是否涨停（A股一般涨幅限制为10%，ST股为5%）
+                                is_st = 'ST' in str(stock_name) or 'st' in str(stock_name).lower()
+                                limit_threshold = 4.9 if is_st else 9.9  # 考虑到实际交易中的微小差异
+
+                                if change_pct >= limit_threshold:
+                                    limit_up_stocks.append({
+                                        'stock_code': stock_code,
+                                        'stock_name': stock_name,
+                                        'current_price': round(current_price, 2) if current_price else 0,
+                                        'change_pct': round(change_pct, 2),
+                                        'volume': volume,
+                                        'amount': amount,
+                                        'limit_up_type': 'ST涨停' if is_st else '普通涨停'
+                                    })
+
+                            except Exception as e:
+                                logger.warning(f"处理股票 {stock_code} 实时数据失败: {e}")
+                                continue
 
                 except Exception as e:
-                    logger.warning(f"检查股票 {stock_code} 涨停情况失败: {e}")
+                    logger.error(f"获取第 {i//batch_size + 1} 批实时数据失败: {e}")
                     continue
+
+                logger.info(f"已处理 {min(i + batch_size, len(stock_codes))}/{len(stock_codes)} 只股票")
 
             # 按涨幅排序
             limit_up_stocks.sort(key=lambda x: x['change_pct'], reverse=True)

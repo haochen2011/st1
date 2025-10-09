@@ -188,6 +188,54 @@ class ResonanceAnalyzer:
 
         return signals
 
+    def analyze_all_stocks(self):
+        """分析所有股票的三层共振情况"""
+        try:
+            from data.enhanced_database import enhanced_db_manager
+
+            # 获取所有股票代码
+            stock_sql = "SELECT stock_code, stock_name FROM stock_info LIMIT 100"  # 限制100只股票进行测试
+            stock_list = enhanced_db_manager.safe_query_to_dataframe(
+                stock_sql, {}, required_tables=['stock_info']
+            )
+
+            if stock_list.empty:
+                logger.warning("未找到股票数据")
+                return []
+
+            resonance_stocks = []
+
+            for _, stock in stock_list.iterrows():
+                stock_code = stock['stock_code']
+                stock_name = stock['stock_name']
+
+                try:
+                    # 分析单个股票
+                    result = self.perform_full_analysis(stock_code)
+
+                    # 如果共振评分大于80，认为符合条件
+                    if result.get('resonance_score', 0) >= 80:
+                        resonance_stocks.append({
+                            'stock_code': stock_code,
+                            'stock_name': stock_name,
+                            'resonance_score': result['resonance_score'],
+                            'signals': result.get('signals', [])
+                        })
+
+                except Exception as e:
+                    logger.warning(f"分析股票 {stock_code} 失败: {e}")
+                    continue
+
+            # 按共振评分排序
+            resonance_stocks.sort(key=lambda x: x['resonance_score'], reverse=True)
+
+            logger.info(f"三层共振分析完成，发现 {len(resonance_stocks)} 只符合条件的股票")
+            return resonance_stocks
+
+        except Exception as e:
+            logger.error(f"批量分析失败: {e}")
+            return []
+
 
 # 创建全局实例
 resonance_analyzer = ResonanceAnalyzer()

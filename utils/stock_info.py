@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, date
 from loguru import logger
+
 try:
     from data.enhanced_database import enhanced_db_manager as db_manager
 except ImportError:
@@ -22,27 +23,36 @@ class StockInfo:
         self.market_codes = config.get_market_codes()
 
     def get_stock_list(self, market='all'):
-        """获取股票列表"""
+        """获取股票列表 - 获取所有A股（上海、深圳、北京）"""
         try:
-            if market == 'all' or market == 'sh':
-                # 获取上海股票列表
-                sh_stocks = ak.stock_info_sh_name_code()
-                sh_stocks['market'] = 'sh'
+            import time
+            # 使用 akshare 获取所有A股股票列表
+            # stock_info_a_code_name 返回所有A股（包括上海、深圳、北京）
+            all_stocks = ak.stock_info_a_code_name()
+            time.sleep(0.5)  # API调用后休息0.5秒
 
-            if market == 'all' or market == 'sz':
-                # 获取深圳股票列表
-                sz_stocks = ak.stock_zh_a_spot_em()
-                sz_stocks = sz_stocks[sz_stocks['代码'].str.startswith(('00', '30'))]
-                sz_stocks = sz_stocks[['代码', '名称']].rename(
-                    columns={'代码': 'SECURITY_CODE_A', '名称': 'SECURITY_ABBR_A'})
-                sz_stocks['market'] = 'sz'
+            # 添加市场标识
+            def get_market(code):
+                """根据股票代码判断市场"""
+                if code.startswith('6'):
+                    return 'sh'  # 上海
+                elif code.startswith(('0', '3')):
+                    return 'sz'  # 深圳
+                elif code.startswith(('4', '8')):
+                    return 'bj'  # 北京
+                else:
+                    return 'unknown'
 
+            all_stocks['market'] = all_stocks['code'].apply(get_market)
+
+            # 统一列名为 SECURITY_CODE_A 和 SECURITY_ABBR_A
+            all_stocks = all_stocks.rename(columns={'code': 'SECURITY_CODE_A', 'name': 'SECURITY_ABBR_A'})
+
+            # 根据market参数筛选
             if market == 'all':
-                stocks = pd.concat([sh_stocks, sz_stocks], ignore_index=True)
-            elif market == 'sh':
-                stocks = sh_stocks
-            elif market == 'sz':
-                stocks = sz_stocks
+                stocks = all_stocks
+            elif market in ['sh', 'sz', 'bj']:
+                stocks = all_stocks[all_stocks['market'] == market]
             else:
                 raise ValueError(f"不支持的市场代码: {market}")
 

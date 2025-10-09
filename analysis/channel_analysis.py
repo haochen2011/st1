@@ -225,6 +225,75 @@ class ChannelAnalyzer:
             'resistance_levels': resistance_levels
         }
 
+    def analyze_channels(self):
+        """分析所有股票的多空通道状态"""
+        try:
+            from data.enhanced_database import enhanced_db_manager
+            from data.basic_data import basic_data
+
+            # 获取股票列表
+            stock_sql = "SELECT stock_code, stock_name FROM stock_info LIMIT 30"  # 限制30只股票进行测试
+            stock_list = enhanced_db_manager.safe_query_to_dataframe(
+                stock_sql, {}, required_tables=['stock_info']
+            )
+
+            if stock_list.empty:
+                logger.warning("未找到股票数据")
+                return []
+
+            channel_results = []
+
+            for _, stock in stock_list.iterrows():
+                stock_code = stock['stock_code']
+                stock_name = stock['stock_name']
+
+                try:
+                    # 获取股票历史数据
+                    end_date = datetime.now().strftime('%Y%m%d')
+                    start_date = (datetime.now() - timedelta(days=60)).strftime('%Y%m%d')
+
+                    stock_data = basic_data.get_stock_data(stock_code, 'daily', start_date, end_date)
+
+                    if stock_data.empty:
+                        continue
+
+                    # 分析通道
+                    result = self.perform_full_channel_analysis(stock_data)
+
+                    if 'error' not in result:
+                        channel_status = result.get('channel_status', {})
+
+                        # 简化通道状态判断
+                        position_status = channel_status.get('position_status', '通道中部')
+                        channel_trend = channel_status.get('channel_trend', '横盘')
+
+                        if channel_trend == '上升' and position_status in ['接近下轨', '通道中部']:
+                            status = 'bullish'
+                        elif channel_trend == '下降' and position_status in ['接近上轨', '通道中部']:
+                            status = 'bearish'
+                        else:
+                            status = 'neutral'
+
+                        channel_results.append({
+                            'stock_code': stock_code,
+                            'stock_name': stock_name,
+                            'channel_status': status,
+                            'channel_trend': channel_trend,
+                            'position_status': position_status,
+                            'channel_width': channel_status.get('channel_width', 0)
+                        })
+
+                except Exception as e:
+                    logger.warning(f"分析股票 {stock_code} 通道失败: {e}")
+                    continue
+
+            logger.info(f"多空通道分析完成，共分析 {len(channel_results)} 只股票")
+            return channel_results
+
+        except Exception as e:
+            logger.error(f"批量通道分析失败: {e}")
+            return []
+
 
 # 创建全局实例
 channel_analyzer = ChannelAnalyzer()

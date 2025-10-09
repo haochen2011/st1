@@ -159,6 +159,49 @@ class AnomalyDetector:
 
         return anomalies
 
+    def detect_anomalies(self):
+        """检测市场异动股票"""
+        try:
+            from data.enhanced_database import enhanced_db_manager
+
+            # 获取活跃股票列表
+            stock_sql = "SELECT stock_code, stock_name FROM stock_info LIMIT 50"  # 限制50只股票进行测试
+            stock_list = enhanced_db_manager.safe_query_to_dataframe(
+                stock_sql, {}, required_tables=['stock_info']
+            )
+
+            if stock_list.empty:
+                logger.warning("未找到股票数据")
+                return []
+
+            stock_codes = stock_list['stock_code'].tolist()
+
+            # 调用现有的监控方法
+            result = self.monitor_stock_list(stock_codes)
+
+            # 转换为简化格式
+            anomaly_stocks = []
+            for anomaly in result.get('anomalies', []):
+                stock_code = anomaly['stock_code']
+                stock_name_row = stock_list[stock_list['stock_code'] == stock_code]
+                stock_name = stock_name_row.iloc[0]['stock_name'] if not stock_name_row.empty else '未知'
+
+                anomaly_info = anomaly['anomaly']
+                anomaly_stocks.append({
+                    'stock_code': stock_code,
+                    'stock_name': stock_name,
+                    'anomaly_type': anomaly_info.get('type', '未知'),
+                    'description': anomaly_info.get('description', ''),
+                    'severity': anomaly_info.get('severity', 'medium')
+                })
+
+            logger.info(f"异动检测完成，发现 {len(anomaly_stocks)} 只异动股票")
+            return anomaly_stocks
+
+        except Exception as e:
+            logger.error(f"异动检测失败: {e}")
+            return []
+
 
 # 创建全局实例
 anomaly_detector = AnomalyDetector()

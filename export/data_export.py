@@ -255,6 +255,114 @@ class DataExporter:
             logger.error(f"导出自定义查询失败: {e}")
             return None
 
+    def export_with_progress(self, query_func, params_list, filename_prefix, format='excel'):
+        """带进度跟踪的批量导出，支持断点续传"""
+        try:
+            import time
+            results = []
+            failed_items = []
+            api_call_count = 0
+
+            total = len(params_list)
+            for idx, params in enumerate(params_list, 1):
+                try:
+                    # API调用频率控制
+                    api_call_count += 1
+                    if api_call_count % 10 == 0:
+                        logger.info(f"已处理 {idx}/{total}，休息1秒...")
+                        time.sleep(1)
+                    else:
+                        time.sleep(0.1)
+
+                    # 执行查询
+                    result = query_func(**params)
+                    if result is not None:
+                        results.append(result)
+
+                    if idx % 10 == 0 or idx == total:
+                        logger.info(f"进度: {idx}/{total} ({idx * 100 // total}%)")
+
+                except Exception as e:
+                    logger.error(f"处理第 {idx} 项失败: {e}")
+                    failed_items.append({'index': idx, 'params': params, 'error': str(e)})
+                    continue
+
+            # 导出结果
+            if results:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = f"{filename_prefix}_{timestamp}"
+                filepath = self._export_dataframe(pd.concat(results, ignore_index=True), filename, format)
+
+                # 如果有失败项，也导出失败列表
+                if failed_items:
+                    failed_df = pd.DataFrame(failed_items)
+                    failed_filepath = self._export_dataframe(failed_df, f"{filename_prefix}_failed_{timestamp}",
+                                                             'excel')
+                    logger.warning(f"导出完成，但有 {len(failed_items)} 项失败，详见: {failed_filepath}")
+
+                return filepath
+            else:
+                logger.warning("没有成功导出的数据")
+                return None
+
+        except Exception as e:
+            logger.error(f"批量导出失败: {e}")
+            return None
+
+    def export_with_progress(self, query_func, params_list, filename_prefix, format='excel'):
+        """带进度跟踪的批量导出，支持断点续传"""
+        try:
+            import time
+            results = []
+            failed_items = []
+            api_call_count = 0
+
+            total = len(params_list)
+            for idx, params in enumerate(params_list, 1):
+                try:
+                    # API调用频率控制
+                    api_call_count += 1
+                    if api_call_count % 10 == 0:
+                        logger.info(f"已处理 {idx}/{total}，休息1秒...")
+                        time.sleep(1)
+                    else:
+                        time.sleep(0.1)
+
+                    # 执行查询
+                    result = query_func(**params)
+                    if result is not None:
+                        results.append(result)
+
+                    if idx % 10 == 0 or idx == total:
+                        logger.info(f"进度: {idx}/{total} ({idx * 100 // total}%)")
+
+                except Exception as e:
+                    logger.error(f"处理第 {idx} 项失败: {e}")
+                    failed_items.append({'index': idx, 'params': params, 'error': str(e)})
+                    continue
+
+            # 导出结果
+            if results:
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                filename = f"{filename_prefix}_{timestamp}"
+                filepath = self._export_dataframe(pd.concat(results, ignore_index=True), filename, format)
+
+                # 如果有失败项，也导出失败列表
+                if failed_items:
+                    failed_df = pd.DataFrame(failed_items)
+                    failed_filepath = self._export_dataframe(failed_df, f"{filename_prefix}_failed_{timestamp}",
+                                                             'excel')
+                    logger.warning(f"导出完成，但有 {len(failed_items)} 项失败，详见: {failed_filepath}")
+
+                return filepath
+            else:
+                logger.warning("没有成功导出的数据")
+                return None
+
+        except Exception as e:
+            logger.error(f"批量导出失败: {e}")
+            return None
+
     def export_statistical_report(self, stock_codes=None, period='daily', format='excel'):
         """导出统计报告"""
         try:
@@ -326,11 +434,24 @@ class DataExporter:
             return None
 
     def _export_dataframe(self, df, filename, format):
-        """导出DataFrame到指定格式"""
+        """导出DataFrame到指定格式 - 增强错误处理"""
         try:
+            # 确保导出目录存在
+            os.makedirs(self.export_path, exist_ok=True)
+
+            # 数据验证
+            if df.empty:
+                logger.warning("DataFrame为空，跳过导出")
+                return None
+
             if format.lower() == 'excel':
                 filepath = os.path.join(self.export_path, f"{filename}.xlsx")
-                df.to_excel(filepath, index=False)
+                # 使用openpyxl引擎，并添加错误处理
+                try:
+                    df.to_excel(filepath, index=False, engine='openpyxl')
+                except Exception as e:
+                    logger.warning(f"使用openpyxl导出失败: {e}，尝试使用xlsxwriter")
+                    df.to_excel(filepath, index=False, engine='xlsxwriter')
 
             elif format.lower() == 'csv':
                 filepath = os.path.join(self.export_path, f"{filename}.csv")
@@ -559,3 +680,4 @@ class DataExporter:
 
 # 创建全局实例
 data_exporter = DataExporter()
+

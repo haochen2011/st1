@@ -379,10 +379,9 @@ def run_limit_up_analysis():
     print("\n📈 涨停板分析...")
 
     try:
-        from analysis.limit_up_analysis import LimitUpAnalysis
+        from analysis.limit_up_analysis import limit_up_analyzer
 
-        analyzer = LimitUpAnalysis()
-        result = analyzer.analyze_recent_limit_ups()
+        result = limit_up_analyzer.analyze_recent_limit_ups()
 
         print(f"✅ 分析完成，发现 {len(result)} 只涨停股票")
 
@@ -400,10 +399,9 @@ def run_anomaly_detection():
     print("\n🔍 异动检测分析...")
 
     try:
-        from analysis.anomaly_detection import AnomalyDetection
+        from analysis.anomaly_detection import anomaly_detector
 
-        detector = AnomalyDetection()
-        result = detector.detect_anomalies()
+        result = anomaly_detector.detect_anomalies()
 
         print(f"✅ 检测完成，发现 {len(result)} 只异动股票")
 
@@ -421,10 +419,9 @@ def run_channel_analysis():
     print("\n📉 多空通道分析...")
 
     try:
-        from analysis.channel_analysis import ChannelAnalysis
+        from analysis.channel_analysis import channel_analyzer
 
-        analyzer = ChannelAnalysis()
-        result = analyzer.analyze_channels()
+        result = channel_analyzer.analyze_channels()
 
         print(f"✅ 分析完成，共分析 {len(result)} 只股票的通道状态")
 
@@ -453,34 +450,34 @@ def export_analysis_results():
 
         # 三层共振分析
         try:
-            from analysis.resonance_analysis import ResonanceAnalysis
-            analyzer = ResonanceAnalysis()
-            analysis_results['resonance'] = analyzer.analyze_all_stocks()
-        except:
+            from analysis.resonance_analysis import resonance_analyzer
+            analysis_results['resonance'] = resonance_analyzer.analyze_all_stocks()
+        except Exception as e:
+            print(f"三层共振分析失败: {e}")
             analysis_results['resonance'] = []
 
         # 涨停板分析
         try:
-            from analysis.limit_up_analysis import LimitUpAnalysis
-            analyzer = LimitUpAnalysis()
-            analysis_results['limit_up'] = analyzer.analyze_recent_limit_ups()
-        except:
+            from analysis.limit_up_analysis import limit_up_analyzer
+            analysis_results['limit_up'] = limit_up_analyzer.analyze_recent_limit_ups()
+        except Exception as e:
+            print(f"涨停板分析失败: {e}")
             analysis_results['limit_up'] = []
 
         # 异动检测
         try:
-            from analysis.anomaly_detection import AnomalyDetection
-            detector = AnomalyDetection()
-            analysis_results['anomaly'] = detector.detect_anomalies()
-        except:
+            from analysis.anomaly_detection import anomaly_detector
+            analysis_results['anomaly'] = anomaly_detector.detect_anomalies()
+        except Exception as e:
+            print(f"异动检测失败: {e}")
             analysis_results['anomaly'] = []
 
         # 多空通道分析
         try:
-            from analysis.channel_analysis import ChannelAnalysis
-            analyzer = ChannelAnalysis()
-            analysis_results['channel'] = analyzer.analyze_channels()
-        except:
+            from analysis.channel_analysis import channel_analyzer
+            analysis_results['channel'] = channel_analyzer.analyze_channels()
+        except Exception as e:
+            print(f"多空通道分析失败: {e}")
             analysis_results['channel'] = []
 
         # 导出到Excel

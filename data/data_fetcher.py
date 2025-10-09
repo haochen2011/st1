@@ -22,6 +22,12 @@ class DataFetcher:
     def __init__(self, timeout=10, max_retries=3):
         self.timeout = timeout  # 超时时间（秒）
         self.max_retries = max_retries  # 最大重试次数
+        self.api_call_count = 0  # API调用计数器
+        self.last_sleep_count = 0  # 上次休息时的调用次数
+        self.api_call_count = 0  # API调用计数器
+        self.last_sleep_count = 0  # 上次休息时的调用次数
+        self.api_call_count = 0  # API调用计数器
+        self.last_sleep_count = 0  # 上次休息时的调用次数
 
         # 定义多个数据源的获取方法
         self.data_sources = {
@@ -61,6 +67,51 @@ class DataFetcher:
             return result_queue.get()
 
         raise Exception("函数执行失败，无返回结果")
+
+    def _rate_limit_check(self):
+        """API调用频率控制 - 每调用10次后休息1秒"""
+        import time
+        self.api_call_count += 1
+
+        # 每调用10次API后休息1秒
+        if self.api_call_count - self.last_sleep_count >= 10:
+            logger.info(f"已连续调用API {self.api_call_count - self.last_sleep_count} 次，休息1秒...")
+            time.sleep(1)
+            self.last_sleep_count = self.api_call_count
+        else:
+            # 正常调用间隔0.1秒
+            time.sleep(0.1)
+
+
+    def _rate_limit_check(self):
+        """API调用频率控制 - 每调用10次后休息1秒"""
+        import time
+        self.api_call_count += 1
+
+        # 每调用10次API后休息1秒
+        if self.api_call_count - self.last_sleep_count >= 10:
+            logger.info(f"已连续调用API {self.api_call_count - self.last_sleep_count} 次，休息1秒...")
+            time.sleep(1)
+            self.last_sleep_count = self.api_call_count
+        else:
+            # 正常调用间隔0.1秒
+            time.sleep(0.1)
+
+
+    def _rate_limit_check(self):
+        """API调用频率控制 - 每调用10次后休息1秒"""
+        import time
+        self.api_call_count += 1
+
+        # 每调用10次API后休息1秒
+        if self.api_call_count - self.last_sleep_count >= 10:
+            logger.info(f"已连续调用API {self.api_call_count - self.last_sleep_count} 次，休息1秒...")
+            time.sleep(1)
+            self.last_sleep_count = self.api_call_count
+        else:
+            # 正常调用间隔0.1秒
+            time.sleep(0.1)
+
 
     def _try_multiple_sources(self, operation: str, *args, **kwargs) -> pd.DataFrame:
         """尝试多个数据源获取数据"""
@@ -271,6 +322,9 @@ class DataFetcher:
     def get_stock_list(self) -> pd.DataFrame:
         """获取股票列表"""
         try:
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
             result = self._try_multiple_sources('stock_list')
 
             # 标准化列名
@@ -304,6 +358,9 @@ class DataFetcher:
     def get_realtime_data(self, stock_codes: List[str]) -> pd.DataFrame:
         """获取实时行情数据"""
         try:
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
             result = self._try_multiple_sources('realtime_data', stock_codes)
 
             # 标准化列名
@@ -342,6 +399,9 @@ class DataFetcher:
     def get_historical_data(self, stock_code: str, start_date: str, end_date: str) -> pd.DataFrame:
         """获取历史行情数据"""
         try:
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
             result = self._try_multiple_sources('historical_data', stock_code, start_date, end_date)
 
             # 标准化列名
@@ -389,6 +449,9 @@ class DataFetcher:
     def get_market_index_data(self) -> Dict:
         """获取大盘指数数据"""
         try:
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
             result = self._try_multiple_sources('market_index')
 
             if not result.empty:
@@ -409,6 +472,9 @@ class DataFetcher:
     def get_sector_data(self) -> pd.DataFrame:
         """获取板块数据"""
         try:
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
+            self._rate_limit_check()  # API调用频率控制
             result = self._try_multiple_sources('sector_data')
 
             # 标准化列名
